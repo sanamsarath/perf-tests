@@ -1,0 +1,17 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{.Name}}
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get"]
+- apiGroups: ["ciliumnetworkpolicies.cilium.io"]
+  resources: ["ciliumnetworkpolicies"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+- apiGroups: ["ciliumclusterwidenetworkpolicies.cilium.io"]
+  resources: ["ciliumclusterwidenetworkpolicies"]
+  verbs: ["get", "list", "watch", "create", "delete"]

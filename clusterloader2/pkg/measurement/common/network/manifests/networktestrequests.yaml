@@ -4,8 +4,8 @@ metadata:
   name: network-test-{{.index}}
   namespace: netperf
   labels:
-   {{.clientPodName}}: clientPodName
-   {{.serverPodName}}: serverPodName
+    {{ (StructuralData .clientPodName)}}: clientPodName
+    {{ (StructuralData .serverPodName)}}: serverPodName
 spec:
   clientPodName: {{.clientPodName}} 
   serverPodName : {{.serverPodName}}

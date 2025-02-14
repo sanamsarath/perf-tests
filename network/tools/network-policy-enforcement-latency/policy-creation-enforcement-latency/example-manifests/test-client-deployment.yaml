@@ -21,7 +21,8 @@ spec:
           name: npdelaymetrics
           protocol: TCP
         imagePullPolicy: Always
-        image: gcr.io/k8s-staging-perf-tests/network-policy-enforcement-latency/policy-creation-enforcement-latency:v0.0.1
+          # image: gcr.io/k8s-staging-perf-tests/network-policy-enforcement-latency/policy-creation-enforcement-latency:v0.0.1
+        image: docker.io/sanamsarath/policy-creation-enforcement-latency:v0.0.1 
         command:
         - sh
         - -c
@@ -33,4 +34,5 @@ spec:
           -MaxTargets=20
           -MetricsPort=9160
           -AllowPolicyName=allow-egress-to-target
+          -np_type=cilium
       serviceAccountName: netpol-enforcement-latency

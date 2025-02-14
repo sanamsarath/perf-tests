@@ -58,7 +58,10 @@ const (
 	workerPodDeploymentManifestFilePath = "manifests/*deployment.yaml"
 	networkTestRequestFilePath          = "manifests/networktestrequests.yaml"
 	crdManifestFilePath                 = "manifests/*CustomResourceDefinition.yaml"
-	clusterRoleBindingFilePath          = "manifests/roleBinding.yaml"
+	workerRoleBindingFilePath           = "manifests/worker_roleBinding.yaml"
+	workerRoleFilePath                  = "manifests/worker_role.yaml"
+	workerServiceAccountFilePath        = "manifests/worker_serviceaccount.yaml"
+	networkPolicyFilePath               = "manifests/network_policy.yaml"
 	customResourceDefinitionName        = "networktestrequests.clusterloader.io"
 	rbacName                            = "networktestrequests-rbac"
 )
@@ -108,6 +111,7 @@ type networkPerformanceMeasurement struct {
 	podRatioType    string
 	testDuration    time.Duration
 	protocol        string
+	netPolEnabled   bool
 
 	// workerPodInfo stores list of podData for every worker node.
 	podInfo    workerPodInfo
@@ -194,15 +198,43 @@ func (npm *networkPerformanceMeasurement) initializeInformer() error {
 }
 
 func (npm *networkPerformanceMeasurement) prepareCluster() error {
+	templateMapping := map[string]interface{}{
+		"Name":      "worker",
+		"Namespace": netperfNamespace,
+	}
+
+	// Create namespace
 	if err := client.CreateNamespace(npm.k8sClient, netperfNamespace); err != nil {
 		return fmt.Errorf("error while creating namespace: %v", err)
 	}
-	if err := npm.framework.ApplyTemplatedManifests(manifestsFS, clusterRoleBindingFilePath, nil); err != nil {
-		return fmt.Errorf("error while creating clusterRoleBinding: %v", err)
-	}
+
+	// CustomResourceDefinition
 	if err := npm.framework.ApplyTemplatedManifests(manifestsFS, crdManifestFilePath, nil); err != nil {
 		return fmt.Errorf("error while creating CRD: %v", err)
 	}
+
+	// ClusterRole
+	if err := npm.framework.ApplyTemplatedManifests(manifestsFS, workerRoleFilePath, templateMapping); err != nil {
+		return fmt.Errorf("error while creating clusterRole: %v", err)
+	}
+
+	// ClusterRoleBinding
+	if err := npm.framework.ApplyTemplatedManifests(manifestsFS, workerRoleBindingFilePath, templateMapping); err != nil {
+		return fmt.Errorf("error while creating clusterRoleBinding: %v", err)
+	}
+
+	// ServiceAccount
+	if err := npm.framework.ApplyTemplatedManifests(manifestsFS, workerServiceAccountFilePath, templateMapping); err != nil {
+		return fmt.Errorf("error while creating serviceAccount: %v", err)
+	}
+
+	// network policy
+	if npm.netPolEnabled {
+		if err := npm.framework.ApplyTemplatedManifests(manifestsFS, networkPolicyFilePath, templateMapping); err != nil {
+			return fmt.Errorf("error while creating network policy: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -227,10 +259,15 @@ func (npm *networkPerformanceMeasurement) cleanupCluster() {
 
 func (npm *networkPerformanceMeasurement) createAndWaitForWorkerPods() error {
 	// Create worker pods
-	var replicas = map[string]interface{}{"Replicas": npm.numberOfClients + npm.numberOfServers}
-	if err := npm.framework.ApplyTemplatedManifests(manifestsFS, workerPodDeploymentManifestFilePath, replicas); err != nil {
+	var templateMapping = map[string]interface{}{
+		"Name":     "worker",
+		"Replicas": npm.numberOfClients + npm.numberOfServers,
+	}
+	// var replicas = map[string]interface{}{"Replicas": npm.numberOfClients + npm.numberOfServers}
+	if err := npm.framework.ApplyTemplatedManifests(manifestsFS, workerPodDeploymentManifestFilePath, templateMapping); err != nil {
 		return fmt.Errorf("failed to create worked pods: %v ", err)
 	}
+
 	// Wait for all worker pods to be ready
 	ctx, cancel := context.WithTimeout(context.TODO(), podReadyTimeout)
 	defer cancel()
@@ -417,7 +454,7 @@ func (npm *networkPerformanceMeasurement) getMetricData(data *testResultSummary,
 }
 
 func (npm *networkPerformanceMeasurement) waitForMetricsFromPods() {
-	bufferTime := time.Duration(math.Max(10, float64(npm.numberOfClients)*0.1)) * time.Second
+	bufferTime := time.Duration(math.Max(30, float64(npm.numberOfClients)*0.1)) * time.Second
 	timeout := initialDelayForTestExecution + npm.testDuration + bufferTime
 	interval := 2 * time.Second
 	if err := wait.Poll(interval, timeout, npm.checkResponseReceivedFromPods); err != nil {

@@ -1,0 +1,175 @@
+{{$NUMBER_OF_SERVERS := DefaultParam .CL2_NUMBER_OF_SERVERS 2}}
+{{$NUMBER_OF_CLIENTS := DefaultParam .CL2_NUMBER_OF_CLIENTS 2}}
+{{$TARGET_PORT := DefaultParam .CL2_TARGET_PORT 80}}
+{{$WORKERS_PER_CLIENT := DefaultParam .CL2_WORKERS_PER_CLIENT 5}}
+{{$DURATION := DefaultParam .CL2_DURATION 600s}}
+namespace:
+  number: {{$NUMBER_OF_CLIENTS}}
+  prefix: slo
+  deleteStaleNamespaces: true
+  deleteAutomanagedNamespaces: true
+  enableExistingNamespaces: false
+steps:
+# 1. start cilium agent metrics
+# 2. start cilium envoy metrics
+# 3. start resource usage metrics (cpu, memory usage of Envoy) 
+# 4. start network performance measurement (setup and run)
+# 5. gather network performance measurement (wait and gather results)
+# 6. gather resource usage metrics
+# 7. gather cilium envoy metrics
+# 8. gather cilium agent metrics
+
+# 1. start cilium agent metrics
+- name: Cilium Agent Metrics
+  measurements:
+  - Identifier: CiliumAgentAverageCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: CiliumAgent Average CPU Usage
+      metricVersion: v1
+      unit: cpu
+      queries:
+      - name: Perc99
+        query: quantile(0.99, avg_over_time(rate(cilium_process_cpu_seconds_total[1m])[%v:]))
+      - name: Perc90
+        query: quantile(0.90, avg_over_time(rate(cilium_process_cpu_seconds_total[1m])[%v:]))
+      - name: Perc50
+        query: quantile(0.50, avg_over_time(rate(cilium_process_cpu_seconds_total[1m])[%v:]))
+  - Identifier: CiliumAgentAvgMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Avg Memory Usage
+      metricVersion: v1
+      unit: MB
+      queries:
+      - name: Perc99
+        query: quantile(0.99, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc90
+        query: quantile(0.90, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc50
+        query: quantile(0.5, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+  - Identifier: CiliumAgentMaxCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Max CPU Usage
+      metricVersion: v1
+      unit: cpu
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, max_over_time(rate(cilium_process_cpu_seconds_total[1m])[%v:]))
+      - name: Perc90
+        query: quantile(0.90, max_over_time(rate(cilium_process_cpu_seconds_total[1m])[%v:]))
+      - name: Perc50
+        query: quantile(0.50, max_over_time(rate(cilium_process_cpu_seconds_total[1m])[%v:]))      
+  - Identifier: CiliumAgentMaxMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Max Memory Usage
+      metricVersion: v1
+      unit: MB
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc90
+        query: quantile(0.90, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc50
+        query: quantile(0.5, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+# 2. start cilium envoy metrics
+- name: Starting cilium envoy metrics for http load test
+  measurements:
+  - Identifier: HTTPPerfCiliumEnvoyMetrics
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: "Ciliu Envoy http metrics"
+      metricVersion: v1
+      unit: s
+      queries:
+        - name: Envoy http requests - TargetCount
+          query: sum(envoy_http_rq_total)
+        - name: Envoy rate of http requests
+          query: sum(rate(envoy_http_rq_total[%v]))
+# 3. start resource usage metrics (cpu, memory usage of Envoy)
+- name: Resource Usage
+  measurements:
+    - Identifier: ResourceUsageSummary
+      Method: ResourceUsageSummary
+      Params:
+        action: start
+# 4. start network performance measurement (setup and run)
+- name: Network Policy Soak Test - Start
+  measurements:
+  - Identifier: NetworkPolicySoakMeasurement
+    Method: NetworkPolicySoakMeasurement
+    Params:
+      action: start
+      targetLabelKey: app
+      targetLabelValue: target
+      clientLabelKey: app
+      clientLabelValue: client
+      targetReplicasPerNs: {{$NUMBER_OF_SERVERS}}
+      targetPort: {{$TARGET_PORT}}
+      targetPath: /
+      testDuration: {{$DURATION}}
+      workerPerClient: {{$WORKERS_PER_CLIENT}}
+# 5. Sleep for 2 hours
+- name: Sleep
+  measurements:
+  - Identifier: Sleep
+    Method: Sleep
+    Params:
+      duration: {{$DURATION}}
+# 5. gather network performance measurement (wait and gather results)
+- name: Network Policy Soak Test - Gather Results
+  measurements:
+  - Identifier: NetworkPolicySoakMeasurement
+    Method: NetworkPolicySoakMeasurement
+    Params:
+      action: gather #gather will wait for the soak test to finish
+# 6. gather resource usage metrics
+- name: Resource Usage Summary
+  measurements:
+    - Identifier: ResourceUsageSummary
+      Method: ResourceUsageSummary
+      Params:
+        action: gather
+        enableViolations: true
+# 7. gather cilium envoy metrics
+- name: "gathering cilium envoy metrics for http load test"
+  measurements:
+  - Identifier: HTTPPerfCiliumEnvoyMetrics
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
+# 8. gather cilium agent metrics
+- name: Cilium Metrics
+  measurements:
+    - Identifier: CiliumAgentAverageCPUUsage
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: CiliumAgentAvgMemUsage
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: CiliumAgentMaxCPUUsage
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: CiliumAgentMaxMemUsage
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+
+    

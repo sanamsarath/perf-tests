@@ -104,7 +104,8 @@ func NewResourceUsageGatherer(c clientset.Interface, host string, port int, prov
 		})
 	} else {
 		listOptions := metav1.ListOptions{ResourceVersion: "0"}
-		pods, err := c.CoreV1().Pods(namespace).List(context.TODO(), listOptions)
+		podListOption := metav1.ListOptions{ResourceVersion: "0", LabelSelector: "name=cilium-envoy"}
+		pods, err := c.CoreV1().Pods(namespace).List(context.TODO(), podListOption)
 		if err != nil {
 			return nil, fmt.Errorf("listing pods error: %v", err)
 		}

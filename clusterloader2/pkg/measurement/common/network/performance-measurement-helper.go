@@ -41,6 +41,14 @@ func (npm *networkPerformanceMeasurement) validate(config *measurement.Config) e
 	if npm.protocol != protocolTCP && npm.protocol != protocolUDP && npm.protocol != protocolHTTP {
 		return fmt.Errorf("invalid protocol , supported ones are TCP,UDP,HTTP")
 	}
+	if npm.netPolEnabled, err = util.GetBool(config.Params, "networkpolicyEnabled"); err != nil {
+		// if netpol not provided, then default value is false
+		if util.IsErrKeyNotFound(err) {
+			npm.netPolEnabled = false
+		} else {
+			return err
+		}
+	}
 	if err = npm.validatePodConfiguration(config); err != nil {
 		return err
 	}

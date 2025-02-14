@@ -100,7 +100,7 @@ var (
 	// -d1 : random delay between 0 to 1 sec.
 	// -t<duration>S : run test for <duration> seconds.
 	// -c1 : one concurrent user.
-	httpClientArguments = []string{"http://" + "{serverPodIP}" + ":" + httpPort + "/test", "-d1", "-t" + "{duration}" + "S", "-c1"}
+	httpClientArguments = []string{"http://" + "{serverPodIP}" + ":" + httpPort + "/test", "-d1", "-t" + "{duration}" + "S", "-c" + "{numberOfClients}"}
 
 	protocolArgumentMap = map[string]map[string][]string{
 		"client": {

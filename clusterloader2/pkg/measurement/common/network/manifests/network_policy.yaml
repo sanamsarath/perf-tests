@@ -1,0 +1,22 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{.Name}}
+  namespace: {{.Namespace}}
+  labels:
+    group: network
+spec:
+  endpointSelector:
+    matchLabels:
+      name: {{.Name}}
+      group: network
+  ingress:
+  - toPorts:
+    - ports: 
+      - port: "5301" # client image is hard coded to request on this port
+        protocol: TCP
+      rules:
+        http:
+          - method: GET
+            path: "/test" # client image is hard coded to request on this path
+

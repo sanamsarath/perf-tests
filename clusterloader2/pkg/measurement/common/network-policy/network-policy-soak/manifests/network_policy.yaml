@@ -1,0 +1,25 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{.Name}}
+  namespace: {{.ClientNamespace}}
+  labels:
+    {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
+        k8s:io.kubernetes.pod.namespace: {{.TargetNamespace}}  
+    toPorts:
+    - ports: 
+      - port: "{{.TargetPort}}"
+        protocol: TCP
+      rules:
+        http:
+        - method: GET
+          path: {{.TargetPath}}
+

@@ -2,20 +2,21 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: netperf
-  name: worker
+  name: {{.Name}}
   labels:
     group: network
 spec:
   replicas: {{.Replicas}}
   selector:
     matchLabels:
-      name: worker
+      name: {{.Name}}
   template:
     metadata:
       labels:
         group: network
-        name: worker
+        name: {{.Name}}
     spec:
+      serviceAccountName: {{.Name}}
       containers:
       - image: gcr.io/k8s-testimages/netperfbenchmark:0.3
         name: worker
@@ -26,10 +27,8 @@ spec:
           - --v=4
           - --udpClientExtraArguments=-b 750M
         resources:
-          limits:
-            cpu: "500m"
           requests:
-            cpu: "500m"
+            cpu: "10m"
         env:
         - name: POD_NAME
           valueFrom:
