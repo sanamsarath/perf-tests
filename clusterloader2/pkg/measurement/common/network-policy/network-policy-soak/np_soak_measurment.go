@@ -119,8 +119,10 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 
 	// wait for the deployments to be ready
 	labelSelector := fmt.Sprintf("%s=%s", m.targetLabelKey, m.targetLabelVal)
-	waitDuration := math.Max(5.0, float64(len(m.targetNamespaces)*m.targetReplicasPerNs)*0.1)
-	if err := m.waitForDeploymentPodsReady(context.TODO(), int(waitDuration), labelSelector); err != nil {
+	waitDuration := math.Max(5.0, float64(len(m.targetNamespaces)*m.targetReplicasPerNs)*0.5)
+	podWaitCtx, podWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitDuration)*time.Second)
+	defer podWaitCancel()
+	if err := m.waitForDeploymentPodsReady(podWaitCtx, len(m.targetNamespaces)*m.targetReplicasPerNs, labelSelector); err != nil {
 		return nil, fmt.Errorf("phase: start, %s: failed to wait for target pods to be ready: %v", m.String(), err)
 	}
 
@@ -299,8 +301,6 @@ func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
 
 func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 	// Usually server/target pods replicas are not large, so they should be up and running in a short time
-	klog.Infof("Waiting for target pods to be ready before deploying client pods")
-	time.Sleep(time.Duration(math.Max(30.0, float64(len(m.targetNamespaces)*m.targetReplicasPerNs)*0.1) * float64(time.Second)))
 	klog.Infof("Deploying client pods")
 
 	// convert the test duration to seconds

@@ -133,26 +133,23 @@ func (c *TestClient) startTest() {
 	ctx, cancel := context.WithTimeout(context.Background(), c.duration)
 	defer cancel()
 
-	// start the workers
+	// new common channel to send ip addresses to workers
+	ipChan := make(chan string, c.concurrentThreads)
+
 	var wg sync.WaitGroup
 
-	// ticker list for all workers
-	tickerList := make([]chan interface{}, c.concurrentThreads)
-	for i := 0; i < c.concurrentThreads; i++ {
-		tickerList[i] = make(chan interface{}, 1)
-	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// broadcast the ticker
 		ticker := time.NewTicker(c.interval).C
 		for {
 			select {
 			case <-ticker:
-				// broadcast the ticker to all workers using non-blocking send
+				ip := c.iplookup.GetIp()
+				// broadcast ip to all workers
 				for i := 0; i < c.concurrentThreads; i++ {
 					select {
-					case tickerList[i] <- struct{}{}:
+					case ipChan <- ip:
 					default:
 						// skip if channel is full
 					}
@@ -166,24 +163,23 @@ func (c *TestClient) startTest() {
 
 	for i := 0; i < c.concurrentThreads; i++ {
 		wg.Add(1)
-		go c.worker(&wg, ctx, tickerList[i])
+		// pass ipChan directly to worker
+		go c.worker(&wg, ctx, ipChan)
 	}
 
 	wg.Wait()
 }
 
-// http worker function - to be used in the future
-func (c *TestClient) worker(wg *sync.WaitGroup, context context.Context, ticker <-chan interface{}) {
+// update worker signature to receive string
+func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, ipChan <-chan string) {
 	defer wg.Done()
 	destPort := strconv.Itoa(c.destPort)
 	for {
 		select {
-		case <-context.Done():
+		case <-ctx.Done():
 			klog.Info("Load duration expired, stopping worker")
 			return
-		case <-ticker:
-			ip := c.iplookup.GetIp()
-
+		case ip := <-ipChan:
 			// url
 			url := "http://" + ip + ":" + destPort + c.destPath
 
@@ -211,6 +207,5 @@ func (c *TestClient) worker(wg *sync.WaitGroup, context context.Context, ticker 
 			c.HttpMetrics.requestsSuccess.WithLabelValues("success").Inc()
 			resp.Body.Close()
 		}
-
 	}
 }

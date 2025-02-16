@@ -18,7 +18,7 @@ spec:
       nodeSelector:
         slo: "true"
       containers:
-      - image: acnpublic.azurecr.io/scaletest/nginx:latest
+      - image: sanamsarath/h2playground:0.2
         name: nginx
         ports:
         - containerPort: {{.TargetPort}}

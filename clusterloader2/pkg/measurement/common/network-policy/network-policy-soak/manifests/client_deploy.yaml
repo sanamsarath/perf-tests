@@ -19,7 +19,7 @@ spec:
         node: "client"
       serviceAccountName: {{.ClientName}}-sa
       containers:
-      - image: sanamsarath/netloader:0.4
+      - image: sanamsarath/netloader:0.7
         name: netloader
         args:
           - "--dest_labelSelector={{.TargetLabelKey}}={{.TargetLabelValue}}"

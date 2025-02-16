@@ -2,7 +2,7 @@
 {{$NUMBER_OF_CLIENTS := DefaultParam .CL2_NUMBER_OF_CLIENTS 2}}
 {{$TARGET_PORT := DefaultParam .CL2_TARGET_PORT 80}}
 {{$WORKERS_PER_CLIENT := DefaultParam .CL2_WORKERS_PER_CLIENT 5}}
-{{$DURATION := DefaultParam .CL2_DURATION 600s}}
+{{$DURATION := DefaultParam .CL2_DURATION 600}}
 namespace:
   number: {{$NUMBER_OF_CLIENTS}}
   prefix: slo
@@ -116,7 +116,7 @@ steps:
       targetReplicasPerNs: {{$NUMBER_OF_SERVERS}}
       targetPort: {{$TARGET_PORT}}
       targetPath: /
-      testDuration: {{$DURATION}}
+      testDuration: "{{$DURATION}}s"
       workerPerClient: {{$WORKERS_PER_CLIENT}}
 # 5. Sleep for 2 hours
 - name: Sleep
@@ -124,7 +124,7 @@ steps:
   - Identifier: Sleep
     Method: Sleep
     Params:
-      duration: {{$DURATION}}
+      duration: "{{$DURATION}}s"
 # 5. gather network performance measurement (wait and gather results)
 - name: Network Policy Soak Test - Gather Results
   measurements:
