@@ -12,13 +12,14 @@ CL2_PROMETHEUS_MEMORY_SCALE_FACTOR: 30.0
 CL2_PROMETHEUS_NODE_SELECTOR: "prometheus: \"true\""
 
 # test parameters
-# test setup details - each client will be mapped to a single namespace and
-# each namespace will have defined number of servers.
-# total number of clients = CL2_NUMBER_OF_CLIENTS
-# total number of namespaces = CL2_NUMBER_OF_CLIENTS
-# total number of servers = CL2_NUMBER_OF_SERVERS * CL2_NUMBER_OF_CLIENTS
-CL2_NUMBER_OF_SERVERS: 2
-CL2_NUMBER_OF_CLIENTS: 25
+# No. of clients = CL2_NUMBER_OF_CLIENTS_PER_GROUP * CL2_NUMBER_OF_GROUPS
+# No. of servers = CL2_NUMBER_OF_SERVERS_PER_GROUP * CL2_NUMBER_OF_GROUPS
+# for stress test, we will try to keep # of clients and # of servers limited
+# but increase the number of workers per client to generate more load.
+# 50 workers per client * 20 clients = 1000rps.
+CL2_NUMBER_OF_CLIENTS_PER_GROUP: 1
+CL2_NUMBER_OF_SERVERS_PER_GROUP: 2
+CL2_NUMBER_OF_GROUPS: 20
 CL2_TARGET_PORT: 8080
-CL2_WORKERS_PER_CLIENT: 20
-CL2_DURATION: 10800 # 3 hours
+CL2_WORKERS_PER_CLIENT: 50
+CL2_DURATION: 10800s # 3 hours

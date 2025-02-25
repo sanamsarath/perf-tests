@@ -43,20 +43,21 @@ const (
 var manifestsFS embed.FS
 
 type NetworkPolicySoakMeasurement struct {
-	isRunning           bool
-	testDuration        time.Duration
-	k8sClient           kubernetes.Interface
-	framework           *framework.Framework
-	targetNamespaces    []string
-	targetLabelKey      string
-	targetLabelVal      string
-	clientLabelKey      string
-	clientLabelVal      string
-	targetReplicasPerNs int
-	targetPort          int
-	targetPath          string
-	testEndTime         time.Time
-	workerPerClient     int
+	isRunning            bool
+	testDuration         time.Duration
+	k8sClient            kubernetes.Interface
+	framework            *framework.Framework
+	targetNamespaces     []string
+	targetLabelKey       string
+	targetLabelVal       string
+	clientLabelKey       string
+	clientLabelVal       string
+	targetReplicasPerNs  int
+	clientReplicasPerDep int
+	targetPort           int
+	targetPath           string
+	testEndTime          time.Time
+	workerPerClient      int
 }
 
 func createNetworkPolicySoakMeasurement() measurement.Measurement {
@@ -117,15 +118,6 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 		return nil, err
 	}
 
-	// wait for the deployments to be ready
-	labelSelector := fmt.Sprintf("%s=%s", m.targetLabelKey, m.targetLabelVal)
-	waitDuration := math.Max(5.0, float64(len(m.targetNamespaces)*m.targetReplicasPerNs)*0.5)
-	podWaitCtx, podWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitDuration)*time.Second)
-	defer podWaitCancel()
-	if err := m.waitForDeploymentPodsReady(podWaitCtx, len(m.targetNamespaces)*m.targetReplicasPerNs, labelSelector); err != nil {
-		return nil, fmt.Errorf("phase: start, %s: failed to wait for target pods to be ready: %v", m.String(), err)
-	}
-
 	// deploy the client pods
 	if err := m.deployClientPods(); err != nil {
 		return nil, err
@@ -179,6 +171,10 @@ func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config) er
 		return fmt.Errorf("phase: start, %s: failed to get target replicas per namespace: %v", m.String(), err)
 	}
 
+	if m.clientReplicasPerDep, err = util.GetIntOrDefault(config.Params, "clientReplicasPerDep", 1); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to get client replicas per deployment: %v", m.String(), err)
+	}
+
 	if m.targetPort, err = util.GetIntOrDefault(config.Params, "targetPort", 80); err != nil {
 		return fmt.Errorf("phase: start, %s: failed to get target port: %v", m.String(), err)
 	}
@@ -223,21 +219,38 @@ func (m *NetworkPolicySoakMeasurement) deployRBACResources() error {
 }
 
 func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
+	templateMap := map[string]interface{}{
+		"TargetName":       targetName,
+		"TargetLabelKey":   m.targetLabelKey,
+		"TargetLabelValue": m.targetLabelVal,
+		"Replicas":         m.targetReplicasPerNs,
+		"TargetPort":       m.targetPort,
+	}
 
-	// deploy the target pods in all the target namespaces
-	for _, ns := range m.targetNamespaces {
-		templateMap := map[string]interface{}{
-			"TargetName":       targetName,
-			"TargetNamespace":  ns,
-			"TargetLabelKey":   m.targetLabelKey,
-			"TargetLabelValue": m.targetLabelVal,
-			"Replicas":         m.targetReplicasPerNs,
-			"TargetPort":       m.targetPort,
+	depBatchSize := 50
+	for i := 0; i < len(m.targetNamespaces); i += depBatchSize {
+		end := i + depBatchSize
+		if end > len(m.targetNamespaces) {
+			end = len(m.targetNamespaces)
+		}
+		for _, ns := range m.targetNamespaces[i:end] {
+			templateMap["TargetNamespace"] = ns
+			if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, templateMap); err != nil {
+				return fmt.Errorf("phase: start, %s NS: %s, failed to apply target deployment manifest: %v", m.String(), ns, err)
+			}
 		}
 
-		if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, templateMap); err != nil {
-			return fmt.Errorf("phase: start %s NS: %s, failed to apply target deployment manifest: %v", m.String(), err, ns)
+		// Wait for the current batch deployments to be ready.
+		labelSelector := fmt.Sprintf("%s=%s", m.targetLabelKey, m.targetLabelVal)
+		batchPodCount := (end - i) * m.targetReplicasPerNs
+		waitDuration := math.Max(60.0, float64(batchPodCount)*0.5)
+		targetWaitCtx, targetWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitDuration)*time.Second)
+		// desired pod count is the number of deployments until now * replicas per deployment
+		desiredPodCount := end * m.targetReplicasPerNs
+		if err := m.waitForDeploymentPodsReady(targetWaitCtx, desiredPodCount, labelSelector); err != nil {
+			klog.Warningf("phase: start, %s: failed to wait for target pods to be ready: %v", m.String(), err)
 		}
+		targetWaitCancel() // Explicitly cancel the context immediately after waiting.
 	}
 
 	return nil
@@ -316,17 +329,35 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 		"TargetPort":       m.targetPort,
 		"TargetPath":       m.targetPath,
 		"Duration":         duration,
-		"Replicas":         m.targetReplicasPerNs,
+		"Replicas":         m.clientReplicasPerDep,
 		"Workers":          m.workerPerClient,
 	}
 
-	for _, ns := range m.targetNamespaces {
-		templateMap["TargetNamespace"] = ns
-		templateMap["UniqueName"] = ns // use the target namespace name as the unique name for each client deployment
-
-		if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, templateMap); err != nil {
-			return fmt.Errorf("phase: start, %s NS: %s, failed to apply client deployment manifest: %v", m.String(), err, ns)
+	clientBatchSize := 50
+	for i := 0; i < len(m.targetNamespaces); i += clientBatchSize {
+		end := i + clientBatchSize
+		if end > len(m.targetNamespaces) {
+			end = len(m.targetNamespaces)
 		}
+		for _, ns := range m.targetNamespaces[i:end] {
+			templateMap["TargetNamespace"] = ns
+			templateMap["UniqueName"] = ns // use target namespace name as unique name
+			if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, templateMap); err != nil {
+				return fmt.Errorf("phase: start, %s NS: %s, failed to apply client deployment manifest: %v", m.String(), ns, err)
+			}
+		}
+
+		// Wait for the current batch client pods to be ready.
+		labelSelector := fmt.Sprintf("%s=%s", m.clientLabelKey, m.clientLabelVal)
+		batchPodCount := (end - i) * m.clientReplicasPerDep
+		waitDuration := math.Max(60.0, float64(batchPodCount)*0.5)
+		clientWaitCtx, clientWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitDuration)*time.Second)
+		// desired pod count is the number of deployments until now * replicas per deployment
+		desiredPodCount := end * m.clientReplicasPerDep
+		if err := m.waitForDeploymentPodsReady(clientWaitCtx, desiredPodCount, labelSelector); err != nil {
+			klog.Warningf("phase: start, %s: failed to wait for client pods to be ready: %v", m.String(), err)
+		}
+		clientWaitCancel() // cancel context immediately after waiting
 	}
 
 	m.testEndTime = time.Now().Add(m.testDuration)
@@ -410,7 +441,13 @@ func (m *NetworkPolicySoakMeasurement) Dispose() {
 		klog.Errorf("phase: gather, %s: failed to delete namespace %s: %v", m.String(), clientNamespace, err)
 	}
 
-	// target deployments and ns should be deleted by the framework
+	// clear target deployments from all the target namespaces using label selector
+	labelSelector := fmt.Sprintf("%s=%s", m.targetLabelKey, m.targetLabelVal)
+	for _, ns := range m.targetNamespaces {
+		if err := m.k8sClient.AppsV1().Deployments(ns).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelector}); err != nil {
+			klog.Errorf("phase: gather, %s NS: %s, failed to delete target deployments: %v", m.String(), ns, err)
+		}
+	}
 }
 
 func (m *NetworkPolicySoakMeasurement) String() string {

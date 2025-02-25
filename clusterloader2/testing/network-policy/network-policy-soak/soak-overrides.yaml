@@ -14,13 +14,15 @@ CL2_PROMETHEUS_MEMORY_SCALE_FACTOR: 30.0
 CL2_PROMETHEUS_NODE_SELECTOR: "prometheus: \"true\""
 
 # test parameters
-# test setup details - each client will be mapped to a single namespace and
-# each namespace will have defined number of servers.
-# total number of clients = CL2_NUMBER_OF_CLIENTS
-# total number of namespaces = CL2_NUMBER_OF_CLIENTS
-# total number of servers = CL2_NUMBER_OF_SERVERS * CL2_NUMBER_OF_CLIENTS
-CL2_NUMBER_OF_SERVERS: 2
-CL2_NUMBER_OF_CLIENTS: 2
-CL2_TARGET_PORT: 80
+# No. of clients = CL2_NUMBER_OF_CLIENTS_PER_GROUP * CL2_NUMBER_OF_GROUPS
+# No. of servers = CL2_NUMBER_OF_SERVERS_PER_GROUP * CL2_NUMBER_OF_GROUPS
+# for scale test, we will increase the number of clients and servers to
+# scale the cluster and keep the number of workers per client limted.
+# small scale test - 2000 clients, 2000 servers, 1000 policies
+# large scale test - 20000 clients, 20000 servers, 1000 policies
+CL2_NUMBER_OF_CLIENTS_PER_GROUP: 20
+CL2_NUMBER_OF_SERVERS_PER_GROUP: 20
+CL2_NUMBER_OF_GROUPS: 1000
+CL2_TARGET_PORT: 8080
 CL2_WORKERS_PER_CLIENT: 5
-CL2_DURATION: 600s # 10 minutes
+CL2_DURATION: 86400s # 1 day

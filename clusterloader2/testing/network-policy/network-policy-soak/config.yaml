@@ -1,10 +1,11 @@
-{{$NUMBER_OF_SERVERS := DefaultParam .CL2_NUMBER_OF_SERVERS 2}}
-{{$NUMBER_OF_CLIENTS := DefaultParam .CL2_NUMBER_OF_CLIENTS 2}}
+{{$NUMBER_OF_SERVERS_PER_Group := DefaultParam .CL2_NUMBER_OF_SERVERS_PER_GROUP 2}}
+{{$NUMBER_OF_CLIENTS_PER_Group := DefaultParam .CL2_NUMBER_OF_CLIENTS_PER_GROUP 1}}
+{{$NUMBER_OF_GROUPS := DefaultParam .CL2_NUMBER_OF_GROUPS 2}}
 {{$TARGET_PORT := DefaultParam .CL2_TARGET_PORT 80}}
 {{$WORKERS_PER_CLIENT := DefaultParam .CL2_WORKERS_PER_CLIENT 5}}
 {{$DURATION := DefaultParam .CL2_DURATION 600}}
 namespace:
-  number: {{$NUMBER_OF_CLIENTS}}
+  number: {{$NUMBER_OF_GROUPS}}
   prefix: slo
   deleteStaleNamespaces: true
   deleteAutomanagedNamespaces: true
@@ -26,7 +27,7 @@ steps:
     Method: GenericPrometheusQuery
     Params:
       action: start
-      metricName: CiliumAgent Average CPU Usage
+      metricName: cilium_average_cpu_usage
       metricVersion: v1
       unit: cpu
       queries:
@@ -40,7 +41,7 @@ steps:
     Method: GenericPrometheusQuery
     Params:
       action: start
-      metricName: Cilium Avg Memory Usage
+      metricName: cilium_avg_memory_usage
       metricVersion: v1
       unit: MB
       queries:
@@ -54,7 +55,7 @@ steps:
     Method: GenericPrometheusQuery
     Params:
       action: start
-      metricName: Cilium Max CPU Usage
+      metricName: cilium_max_cpu_usage
       metricVersion: v1
       unit: cpu
       enableViolations: true
@@ -69,7 +70,7 @@ steps:
     Method: GenericPrometheusQuery
     Params:
       action: start
-      metricName: Cilium Max Memory Usage
+      metricName: cilium_max_memory_usage
       metricVersion: v1
       unit: MB
       enableViolations: true
@@ -80,6 +81,20 @@ steps:
         query: quantile(0.90, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
       - name: Perc50
         query: quantile(0.5, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+  - Identifier: CiliumAgentL7Policy
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: cilium_l7_policy 
+      metricVersion: v1
+      unit: count
+      queries:
+      - name: cilium_l7_received
+        query: sum(increase(cilium_policy_l7_total{proxy_type="envoy", rule="received"}[%v:]))
+      - name: cilium_l7_forwarded
+        query: sum(increase(cilium_policy_l7_total{proxy_type="envoy", rule="forwarded"}[%v:]))
+      - name: cilium_l7_failed
+        query: sum(increase(cilium_policy_l7_total{proxy_type="envoy", rule!~"received|forwarded"}[%v:]))  
 # 2. start cilium envoy metrics
 - name: Starting cilium envoy metrics for http load test
   measurements:
@@ -87,21 +102,26 @@ steps:
     Method: GenericPrometheusQuery
     Params:
       action: start
-      metricName: "Ciliu Envoy http metrics"
+      metricName: "cilium_envoy_http_metrics"
       metricVersion: v1
       unit: s
       queries:
-        - name: Envoy http requests - TargetCount
-          query: sum(envoy_http_rq_total)
-        - name: Envoy rate of http requests
-          query: sum(rate(envoy_http_rq_total[%v]))
-# 3. start resource usage metrics (cpu, memory usage of Envoy)
-- name: Resource Usage
-  measurements:
-    - Identifier: ResourceUsageSummary
-      Method: ResourceUsageSummary
-      Params:
-        action: start
+        - name: envoy_http_requests_total
+          query: sum(increase(envoy_http_rq_total{envoy_http_conn_manager_prefix="proxy"}[%v:]))
+        - name: envoy_http_requests_rate
+          query: avg(rate(envoy_http_rq_total{envoy_http_conn_manager_prefix="proxy"}[%v:]) unless rate(envoy_http_rq_total{envoy_http_conn_manager_prefix="proxy"}[%v:]) == 0)
+        - name: envoy_downstream_connections_total
+          query: sum(increase(envoy_listener_downstream_cx_total{envoy_listener_address!~"^(0\\.0\\.0\\.0_9964|127\\.0\\.0\\.1_9878)$"}[%v:]))
+        - name: envoy_downstream_connections_rate
+          query: avg(rate(envoy_listener_downstream_cx_total{envoy_listener_address!~"^(0\\.0\\.0\\.0_9964|127\\.0\\.0\\.1_9878)$"}[%v:]) unless rate(envoy_listener_downstream_cx_total{envoy_listener_address!~"^(0\\.0\\.0\\.0_9964|127\\.0\\.0\\.1_9878)$"}[%v:]) == 0)
+        - name: envoy_upstream_connections_total
+          query: sum(increase(envoy_cluster_upstream_cx_total{envoy_cluster_name="egress-cluster"}[%v:]))
+        - name: envoy_upstream_connections_rate
+          query: avg(rate(envoy_cluster_upstream_cx_total{envoy_cluster_name="egress-cluster"}[%v:]) unless rate(envoy_cluster_upstream_cx_total{envoy_cluster_name="egress-cluster"}[%v:]) == 0)
+        - name: envoy_memory_allocated_max
+          query: max(max_over_time(envoy_server_memory_allocated[%v:])) / 1024 / 1024
+        - name: envoy_memory_heap_size_max
+          query: max(max_over_time(envoy_server_memory_heap_size[%v:])) / 1024 / 1024
 # 4. start network performance measurement (setup and run)
 - name: Network Policy Soak Test - Start
   measurements:
@@ -113,18 +133,26 @@ steps:
       targetLabelValue: target
       clientLabelKey: app
       clientLabelValue: client
-      targetReplicasPerNs: {{$NUMBER_OF_SERVERS}}
+      targetReplicasPerNs: {{$NUMBER_OF_SERVERS_PER_Group}}
+      clientReplicasPerDep: {{$NUMBER_OF_CLIENTS_PER_Group}}
       targetPort: {{$TARGET_PORT}}
       targetPath: /
-      testDuration: "{{$DURATION}}s"
+      testDuration: "{{$DURATION}}"
       workerPerClient: {{$WORKERS_PER_CLIENT}}
+# 3. start resource usage metrics (cpu, memory usage of Envoy)
+- name: Resource Usage
+  measurements:
+    - Identifier: ResourceUsageSummary
+      Method: ResourceUsageSummary
+      Params:
+        action: start
 # 5. Sleep for 2 hours
 - name: Sleep
   measurements:
   - Identifier: Sleep
     Method: Sleep
     Params:
-      duration: "{{$DURATION}}s"
+      duration: "{{$DURATION}}"
 # 5. gather network performance measurement (wait and gather results)
 - name: Network Policy Soak Test - Gather Results
   measurements:
@@ -171,5 +199,16 @@ steps:
       Params:
         action: gather
         enableViolations: true
-
+    - Identifier: CiliumAgentL7Policy
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+# sleep for 30 mins
+- name: Sleep
+  measurements:
+  - Identifier: Sleep
+    Method: Sleep
+    Params:
+      duration: "1800s"
     

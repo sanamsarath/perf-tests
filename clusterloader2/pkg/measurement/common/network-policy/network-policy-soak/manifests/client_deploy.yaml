@@ -6,7 +6,7 @@ metadata:
   name: {{.UniqueName}}
   namespace: {{.ClientNamespace}}
 spec:
-  replicas: 1
+  replicas: {{.Replicas}}
   selector:
     matchLabels:
       {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
@@ -19,7 +19,7 @@ spec:
         node: "client"
       serviceAccountName: {{.ClientName}}-sa
       containers:
-      - image: sanamsarath/netloader:0.7
+      - image: acnpublic.azurecr.io/sanamsarath/netloader:0.7
         name: netloader
         args:
           - "--dest_labelSelector={{.TargetLabelKey}}={{.TargetLabelValue}}"
@@ -42,4 +42,8 @@ spec:
         operator: "Exists"
         effect: "NoExecute"
         tolerationSeconds: 900
+      - key: "slo"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
 
