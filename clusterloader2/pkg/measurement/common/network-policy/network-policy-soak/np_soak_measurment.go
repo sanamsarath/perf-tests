@@ -61,7 +61,8 @@ type NetworkPolicySoakMeasurement struct {
 	workerPerClient      int
 	npType               string
 	// gatherers
-	gatherers *gatherers.ContainerResourceGatherer
+	gatherers                *gatherers.ContainerResourceGatherer
+	resourceGatheringEnabled bool
 }
 
 func createNetworkPolicySoakMeasurement() measurement.Measurement {
@@ -128,8 +129,10 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 	}
 
 	// start envoy resource gatherer
-	if err := m.envoyResourceGather(); err != nil {
-		return nil, err
+	if m.resourceGatheringEnabled {
+		if err := m.envoyResourceGather(); err != nil {
+			return nil, err
+		}
 	}
 
 	m.isRunning = true
@@ -202,6 +205,10 @@ func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config) er
 
 	if m.npType, err = util.GetStringOrDefault(config.Params, "npType", "k8s"); err != nil {
 		return fmt.Errorf("phase: start, %s: failed to get network policy type: %v", m.String(), err)
+	}
+
+	if m.resourceGatheringEnabled, err = util.GetBoolOrDefault(config.Params, "resourceGatheringEnabled", true); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to get resource gathering enabled: %v", m.String(), err)
 	}
 
 	return nil
@@ -416,6 +423,12 @@ func (m *NetworkPolicySoakMeasurement) gather() ([]measurement.Summary, error) {
 	time.Sleep(time.Until(m.testEndTime))
 	klog.Infof("phase: gather, %s: test run completed", m.String())
 
+	// if resource gathering is not enabled, skip the gathering
+	if !m.resourceGatheringEnabled {
+		klog.Infof("phase: gather, %s: resource gathering not enabled, skipping...", m.String())
+		return nil, nil
+	}
+
 	// stop gathering resource usage
 	if m.gatherers == nil {
 		klog.Warningf("phase: gather, %s: gatherer not initialized. Envoy resource usage not collected", m.String())
@@ -453,8 +466,8 @@ func (m *NetworkPolicySoakMeasurement) envoyResourceGather() error {
 	// resource gatherer options
 	options := gatherers.ResourceGathererOptions{
 		InKubemark:                        m.framework.GetClusterConfig().Provider.Features().IsKubemarkProvider,
-		ResourceDataGatheringPeriod:       60 * time.Second,
-		MasterResourceDataGatheringPeriod: 60 * time.Second,
+		ResourceDataGatheringPeriod:       120 * time.Second,
+		MasterResourceDataGatheringPeriod: 120 * time.Second,
 		Nodes:                             gatherers.AllNodes,
 	}
 
