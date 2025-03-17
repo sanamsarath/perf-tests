@@ -531,6 +531,9 @@ func (m *NetworkPolicySoakMeasurement) Dispose() {
 		if err := m.k8sClient.AppsV1().Deployments(ns).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelector}); err != nil {
 			klog.Errorf("phase: gather, %s NS: %s, failed to delete target deployments: %v", m.String(), ns, err)
 		}
+		// add a delay to avoid API server throttling,
+		// wait for number of replicas per target namespace * 0.1 seconds
+		time.Sleep(time.Duration(m.targetReplicasPerNs) * 100 * time.Millisecond)
 	}
 
 	// stop gatherers
