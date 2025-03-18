@@ -239,14 +239,6 @@ func (m *NetworkPolicySoakMeasurement) deployRBACResources() error {
 }
 
 func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
-	templateMap := map[string]interface{}{
-		"TargetName":       targetName,
-		"TargetLabelKey":   m.targetLabelKey,
-		"TargetLabelValue": m.targetLabelVal,
-		"Replicas":         m.targetReplicasPerNs,
-		"TargetPort":       m.targetPort,
-	}
-
 	depBatchSize := 50
 	for i := 0; i < len(m.targetNamespaces); i += depBatchSize {
 		end := i + depBatchSize
@@ -254,7 +246,17 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
 			end = len(m.targetNamespaces)
 		}
 		for _, ns := range m.targetNamespaces[i:end] {
-			templateMap["TargetNamespace"] = ns
+			// Reinitialize templateMap inside the loop
+			// otherwise, it will be shared across iterations
+			// inside ApplyTemplatedManifests and will cause memory spikes.
+			templateMap := map[string]interface{}{
+				"TargetName":       targetName,
+				"TargetLabelKey":   m.targetLabelKey,
+				"TargetLabelValue": m.targetLabelVal,
+				"Replicas":         m.targetReplicasPerNs,
+				"TargetPort":       m.targetPort,
+				"TargetNamespace":  ns,
+			}
 			if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, templateMap); err != nil {
 				return fmt.Errorf("phase: start, %s NS: %s, failed to apply target deployment manifest: %v", m.String(), ns, err)
 			}
@@ -310,21 +312,19 @@ func (m *NetworkPolicySoakMeasurement) deployAPIServerNetworkPolicy() error {
 }
 
 func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
-
-	templateMap := map[string]interface{}{
-		"ClientNamespace":    clientNamespace,
-		"ClientLabelKey":     m.clientLabelKey,
-		"ClientLabelValue":   m.clientLabelVal,
-		"TargetLabelKey":     m.targetLabelKey,
-		"TargetLabelValue":   m.targetLabelVal,
-		"TargetPort":         strconv.Itoa(m.targetPort),
-		"TargetPath":         m.targetPath,
-		"NetworkPolicy_Type": m.npType,
-	}
-
 	for _, ns := range m.targetNamespaces {
-		templateMap["TargetNamespace"] = ns
-		templateMap["Name"] = ns // use the target namespace name as the network policy name
+		templateMap := map[string]interface{}{
+			"ClientNamespace":    clientNamespace,
+			"ClientLabelKey":     m.clientLabelKey,
+			"ClientLabelValue":   m.clientLabelVal,
+			"TargetLabelKey":     m.targetLabelKey,
+			"TargetLabelValue":   m.targetLabelVal,
+			"TargetPort":         strconv.Itoa(m.targetPort),
+			"TargetPath":         m.targetPath,
+			"NetworkPolicy_Type": m.npType,
+			"TargetNamespace": ns,
+			"Name": ns, // use the target namespace name as the network policy name
+		}
 
 		if err := m.framework.ApplyTemplatedManifests(manifestsFS, netPolFilePath, templateMap); err != nil {
 			return fmt.Errorf("phase: start, %s NS: %s, failed to apply network policy manifest: %v", m.String(), err, ns)
@@ -340,20 +340,6 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 	// convert the test duration to seconds
 	duration := int(m.testDuration.Seconds())
 
-	templateMap := map[string]interface{}{
-		"ClientName":       clientName,
-		"ClientNamespace":  clientNamespace,
-		"ClientLabelKey":   m.clientLabelKey,
-		"ClientLabelValue": m.clientLabelVal,
-		"TargetLabelKey":   m.targetLabelKey,
-		"TargetLabelValue": m.targetLabelVal,
-		"TargetPort":       m.targetPort,
-		"TargetPath":       m.targetPath,
-		"Duration":         duration,
-		"Replicas":         m.clientReplicasPerDep,
-		"Workers":          m.workerPerClient,
-	}
-
 	clientBatchSize := 50
 	for i := 0; i < len(m.targetNamespaces); i += clientBatchSize {
 		end := i + clientBatchSize
@@ -361,8 +347,21 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 			end = len(m.targetNamespaces)
 		}
 		for _, ns := range m.targetNamespaces[i:end] {
-			templateMap["TargetNamespace"] = ns
-			templateMap["UniqueName"] = ns // use target namespace name as unique name
+			templateMap := map[string]interface{}{
+				"ClientName":       clientName,
+				"ClientNamespace":  clientNamespace,
+				"ClientLabelKey":   m.clientLabelKey,
+				"ClientLabelValue": m.clientLabelVal,
+				"TargetLabelKey":   m.targetLabelKey,
+				"TargetLabelValue": m.targetLabelVal,
+				"TargetPort":       m.targetPort,
+				"TargetPath":       m.targetPath,
+				"Duration":         duration,
+				"Replicas":         m.clientReplicasPerDep,
+				"Workers":          m.workerPerClient,
+				"TargetNamespace": ns,
+				"UniqueName": ns, // use target namespace name as unique name
+			}
 			if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, templateMap); err != nil {
 				return fmt.Errorf("phase: start, %s NS: %s, failed to apply client deployment manifest: %v", m.String(), ns, err)
 			}
