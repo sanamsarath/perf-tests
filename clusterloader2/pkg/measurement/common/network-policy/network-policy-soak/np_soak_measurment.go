@@ -420,7 +420,10 @@ func (m *NetworkPolicySoakMeasurement) gather() ([]measurement.Summary, error) {
 
 	// wait for the test to complete
 	klog.Infof("phase: gather, %s: waiting for the test run to complete...", m.String())
-	time.Sleep(time.Until(m.testEndTime))
+	// Instead of: time.Sleep(time.Until(m.testEndTime))
+	timer := time.NewTimer(time.Until(m.testEndTime))
+	<-timer.C
+	// Optionally, call timer.Stop() if needed.
 	klog.Infof("phase: gather, %s: test run completed", m.String())
 
 	// if resource gathering is not enabled, skip the gathering
@@ -532,8 +535,8 @@ func (m *NetworkPolicySoakMeasurement) Dispose() {
 			klog.Errorf("phase: gather, %s NS: %s, failed to delete target deployments: %v", m.String(), ns, err)
 		}
 		// add a delay to avoid API server throttling,
-		// wait for number of replicas per target namespace * 0.1 seconds
-		time.Sleep(time.Duration(m.targetReplicasPerNs) * 100 * time.Millisecond)
+		// wait for 500ms before deleting the next deployment
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	// stop gatherers
