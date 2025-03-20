@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   labels:
     {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
+    # this is dynamically generated and used for group deployment and deletion tracking
+    {{ (StructuralData .TargetDeploymentLabelKey)}}: {{.TargetDeploymentLabelValue}}
   name: {{.TargetName}}
   namespace: {{.TargetNamespace}}
 spec:
@@ -10,10 +12,12 @@ spec:
   selector:
     matchLabels:
       {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
+      {{ (StructuralData .TargetDeploymentLabelKey)}}: {{.TargetDeploymentLabelValue}}
   template:
     metadata:
       labels:
-        app: target
+        {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
+        {{ (StructuralData .TargetDeploymentLabelKey)}}: {{.TargetDeploymentLabelValue}}
     spec:
       nodeSelector:
         slo: "true"
