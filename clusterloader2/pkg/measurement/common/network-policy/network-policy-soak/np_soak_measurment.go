@@ -239,12 +239,9 @@ func (m *NetworkPolicySoakMeasurement) deployRBACResources() error {
 }
 
 func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
-	templateMap := map[string]interface{}{
-		"TargetName":       targetName,
-		"TargetLabelKey":   m.targetLabelKey,
-		"TargetLabelValue": m.targetLabelVal,
-		"Replicas":         m.targetReplicasPerNs,
-		"TargetPort":       m.targetPort,
+	// Validate that the replica count is positive
+	if m.targetReplicasPerNs <= 0 {
+		return fmt.Errorf("phase: start, %s: invalid target replicas per namespace: %d", m.String(), m.targetReplicasPerNs)
 	}
 
 	depBatchSize := 50
@@ -253,21 +250,31 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
 		if end > len(m.targetNamespaces) {
 			end = len(m.targetNamespaces)
 		}
+		// Create a new template map per batch to avoid reuse issues.
+		batchTemplateMap := map[string]interface{}{
+			"TargetName":       targetName,
+			"TargetLabelKey":   m.targetLabelKey,
+			"TargetLabelValue": m.targetLabelVal,
+			"Replicas":         m.targetReplicasPerNs,
+			"TargetPort":       m.targetPort,
+			// generate unique key and value for each deployment batch
+			// this will be used to wait for the pods to be ready by matching the label selector
+			"TargetDeploymentLabelKey":   fmt.Sprintf("%s-%d", m.targetLabelKey, i),
+			"TargetDeploymentLabelValue": fmt.Sprintf("%s-%d", m.targetLabelVal, i),
+		}
 		for _, ns := range m.targetNamespaces[i:end] {
-			templateMap["TargetNamespace"] = ns
-			if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, templateMap); err != nil {
+			batchTemplateMap["TargetNamespace"] = ns
+			if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, batchTemplateMap); err != nil {
 				return fmt.Errorf("phase: start, %s NS: %s, failed to apply target deployment manifest: %v", m.String(), ns, err)
 			}
 		}
 
 		// Wait for the current batch deployments to be ready.
-		labelSelector := fmt.Sprintf("%s=%s", m.targetLabelKey, m.targetLabelVal)
-		batchPodCount := (end - i) * m.targetReplicasPerNs
-		waitDuration := math.Max(60.0, float64(batchPodCount)*0.5)
-		targetWaitCtx, targetWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitDuration)*time.Second)
-		// desired pod count is the number of deployments until now * replicas per deployment
-		desiredPodCount := end * m.targetReplicasPerNs
-		if err := m.waitForDeploymentPodsReady(targetWaitCtx, desiredPodCount, labelSelector); err != nil {
+		labelSelector := fmt.Sprintf("%s=%s", batchTemplateMap["TargetDeploymentLabelKey"], batchTemplateMap["TargetDeploymentLabelValue"])
+		desiredBatchPodCount := (end - i) * m.targetReplicasPerNs
+		waitSeconds := math.Max(60.0, float64(desiredBatchPodCount)*0.5)
+		targetWaitCtx, targetWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitSeconds)*time.Second)
+		if err := m.waitForDeploymentPodsReady(targetWaitCtx, desiredBatchPodCount, labelSelector); err != nil {
 			klog.Warningf("phase: start, %s: failed to wait for target pods to be ready: %v", m.String(), err)
 		}
 		targetWaitCancel() // Explicitly cancel the context immediately after waiting.
@@ -310,7 +317,6 @@ func (m *NetworkPolicySoakMeasurement) deployAPIServerNetworkPolicy() error {
 }
 
 func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
-
 	templateMap := map[string]interface{}{
 		"ClientNamespace":    clientNamespace,
 		"ClientLabelKey":     m.clientLabelKey,
@@ -321,7 +327,6 @@ func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
 		"TargetPath":         m.targetPath,
 		"NetworkPolicy_Type": m.npType,
 	}
-
 	for _, ns := range m.targetNamespaces {
 		templateMap["TargetNamespace"] = ns
 		templateMap["Name"] = ns // use the target namespace name as the network policy name
@@ -339,43 +344,44 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 
 	// convert the test duration to seconds
 	duration := int(m.testDuration.Seconds())
-
-	templateMap := map[string]interface{}{
-		"ClientName":       clientName,
-		"ClientNamespace":  clientNamespace,
-		"ClientLabelKey":   m.clientLabelKey,
-		"ClientLabelValue": m.clientLabelVal,
-		"TargetLabelKey":   m.targetLabelKey,
-		"TargetLabelValue": m.targetLabelVal,
-		"TargetPort":       m.targetPort,
-		"TargetPath":       m.targetPath,
-		"Duration":         duration,
-		"Replicas":         m.clientReplicasPerDep,
-		"Workers":          m.workerPerClient,
-	}
-
 	clientBatchSize := 50
 	for i := 0; i < len(m.targetNamespaces); i += clientBatchSize {
 		end := i + clientBatchSize
 		if end > len(m.targetNamespaces) {
 			end = len(m.targetNamespaces)
 		}
+		// Create a new template map per batch to avoid reuse issues.
+		batchTemplateMap := map[string]interface{}{
+			"ClientName":       clientName,
+			"ClientNamespace":  clientNamespace,
+			"ClientLabelKey":   m.clientLabelKey,
+			"ClientLabelValue": m.clientLabelVal,
+			"TargetLabelKey":   m.targetLabelKey,
+			"TargetLabelValue": m.targetLabelVal,
+			"TargetPort":       m.targetPort,
+			"TargetPath":       m.targetPath,
+			"Duration":         duration,
+			"Replicas":         m.clientReplicasPerDep,
+			"Workers":          m.workerPerClient,
+			// generate unique key and value for each deployment batch
+			// this will be used to wait for the pods to be ready by matching the label selector
+			"ClientDeploymentLabelKey":   fmt.Sprintf("%s-%d", m.clientLabelKey, i),
+			"ClientDeploymentLabelValue": fmt.Sprintf("%s-%d", m.clientLabelVal, i),
+		}
 		for _, ns := range m.targetNamespaces[i:end] {
-			templateMap["TargetNamespace"] = ns
-			templateMap["UniqueName"] = ns // use target namespace name as unique name
-			if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, templateMap); err != nil {
+			batchTemplateMap["TargetNamespace"] = ns
+			batchTemplateMap["UniqueName"] = ns // use the target namespace name as the deployment name
+			if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, batchTemplateMap); err != nil {
 				return fmt.Errorf("phase: start, %s NS: %s, failed to apply client deployment manifest: %v", m.String(), ns, err)
 			}
 		}
 
 		// Wait for the current batch client pods to be ready.
-		labelSelector := fmt.Sprintf("%s=%s", m.clientLabelKey, m.clientLabelVal)
-		batchPodCount := (end - i) * m.clientReplicasPerDep
-		waitDuration := math.Max(60.0, float64(batchPodCount)*0.5)
+		labelSelector := fmt.Sprintf("%s=%s", batchTemplateMap["ClientDeploymentLabelKey"], batchTemplateMap["ClientDeploymentLabelValue"])
+		desiredBatchPodCount := (end - i) * m.clientReplicasPerDep
+		waitDuration := math.Max(60.0, float64(desiredBatchPodCount)*0.5)
 		clientWaitCtx, clientWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitDuration)*time.Second)
-		// desired pod count is the number of deployments until now * replicas per deployment
-		desiredPodCount := end * m.clientReplicasPerDep
-		if err := m.waitForDeploymentPodsReady(clientWaitCtx, desiredPodCount, labelSelector); err != nil {
+		if err := m.waitForDeploymentPodsReady(clientWaitCtx, desiredBatchPodCount, labelSelector); err != nil {
 			klog.Warningf("phase: start, %s: failed to wait for client pods to be ready: %v", m.String(), err)
 		}
 		clientWaitCancel() // cancel context immediately after waiting
