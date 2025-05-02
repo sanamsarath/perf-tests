@@ -68,7 +68,7 @@ func (c *TestClient) parse() error {
 	flag.IntVar(&interval, "interval", 1, "interval between requests")
 	flag.IntVar(&concurrentThreads, "workers", 10, "number of concurrent threads")
 	flag.IntVar(&destPort, "destPort", 80, "destination port number")
-	flag.IntVar(&destPort2, "destPort", 90, "destination port number")
+	flag.IntVar(&destPort2, "destPort2", 90, "destination port number")
 	flag.StringVar(&destPath, "destPath", "/", "destination path")
 
 	flag.Parse()

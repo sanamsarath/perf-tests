@@ -49,6 +49,7 @@ func Start() error {
 
 	// Parse flags for ports.
 	plainPort := flag.String("plain", "8080", "Port for plain text (h2c) server")
+	plainPort2 := flag.String("plain2", "9090", "Port 2 for plain text (h2c) server")
 	tlsPort := flag.String("tls", "8443", "Port for TLS server")
 	flag.Parse()
 
@@ -62,6 +63,12 @@ func Start() error {
 	// HTTP/2 cleartext (plain text) server with h2c.
 	plainServer := &http.Server{
 		Addr:    ":" + *plainPort,
+		Handler: h2c.NewHandler(handler, &http2.Server{}),
+	}
+
+	// HTTP/2 cleartext (plain text) server with h2c.
+	plainServer2 := &http.Server{
+		Addr:    ":" + *plainPort2,
 		Handler: h2c.NewHandler(handler, &http2.Server{}),
 	}
 
@@ -88,6 +95,13 @@ func Start() error {
 		}
 	}()
 
+	go func() {
+		log.Println("Starting HTTP/2 (h2c) server on port", *plainPort2)
+		if err := plainServer2.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			klog.Errorf("Plain server error: %v", err)
+		}
+	}()
+
 	// Run the TLS server concurrently.
 	go func() {
 		log.Println("Starting HTTP/2 TLS server on port", *tlsPort)
@@ -98,7 +112,7 @@ func Start() error {
 	}()
 
 	// Wait for OS termination signal.
-	waitForShutdown(plainServer, tlsServer)
+	waitForShutdown(plainServer, tlsServer, plainServer2)
 	return nil
 }
 
