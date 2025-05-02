@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
+    group: "service-discovery"
     {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
     # this is dynamically generated and used for group deployment and deletion tracking
     {{ (StructuralData .ClientDeploymentLabelKey)}}: {{.ClientDeploymentLabelValue}}
@@ -9,6 +10,11 @@ metadata:
   namespace: {{.ClientNamespace}}
 spec:
   replicas: {{.Replicas}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 20%
+      maxSurge: 20%
   selector:
     matchLabels:
       {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
@@ -16,6 +22,8 @@ spec:
   template:
     metadata:
       labels:
+        group: "service-discovery"
+        phase: {{.DeploymentLabel}}
         {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
         {{ (StructuralData .ClientDeploymentLabelKey)}}: {{.ClientDeploymentLabelValue}}
     spec:
@@ -23,20 +31,28 @@ spec:
         node: "client"
       serviceAccountName: {{.ClientName}}-sa
       containers:
-      - image: acnpublic.azurecr.io/sanamsarath/netloader:0.7
-        name: netloader
-        args:
+        - image: acnpublic.azurecr.io/karanadive/netloader:0.7 
+          name: netloader-8080
+          ports:
+          - name: http
+            containerPort: 8080
+          imagePullPolicy: Always
+          args:
           - "--dest_labelSelector={{.TargetLabelKey}}={{.TargetLabelValue}}"
           - "--namespace={{.TargetNamespace}}"
           - "--duration={{.Duration}}"
           - "--interval=1"
           - "--workers={{.Workers}}"
           - "--destPort={{.TargetPort}}"
+          - "--destPort2={{.TargetPort2}}"
           - "--destPath={{.TargetPath}}"
-        resources: 
-          requests: 
-             cpu: "20m"
-             memory: "40Mi"
+          env:
+          - name: RECORD_LATENCY
+            value: "true"
+          resources: 
+            requests: 
+              cpu: "20m"
+              memory: "40Mi"
       tolerations:
       - key: "node.kubernetes.io/not-ready"
         operator: "Exists"

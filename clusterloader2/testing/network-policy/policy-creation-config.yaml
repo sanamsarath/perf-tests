@@ -4,14 +4,15 @@
 {{$NET_POLICY_ENFORCEMENT_LATENCY_NODE_LABEL_KEY := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LATENCY_NODE_LABEL_KEY "test"}}
 {{$NET_POLICY_ENFORCEMENT_LATENCY_NODE_LABEL_VALUE := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LATENCY_NODE_LABEL_VALUE "net-policy-client"}}
 {{$NET_POLICY_ENFORCEMENT_LATENCY_MAX_TARGET_PODS_PER_NS := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LATENCY_MAX_TARGET_PODS_PER_NS 5}}
-{{$NET_POLICY_ENFORCEMENT_LOAD_COUNT := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LOAD_COUNT 10}}
-{{$NET_POLICY_ENFORCEMENT_LOAD_QPS := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LOAD_QPS 10}}
+{{$NET_POLICY_ENFORCEMENT_LOAD_COUNT := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LOAD_COUNT 0}}
+{{$NET_POLICY_ENFORCEMENT_LOAD_QPS := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LOAD_QPS 0}}
 {{$NET_POLICY_ENFORCEMENT_LOAD_TARGET_NAME := DefaultParam .CL2_POLICY_ENFORCEMENT_LOAD_TARGET_NAME "small-deployment"}}
 {{$NET_POLICY_TYPE := DefaultParam .CL2_NET_POLICY_TYPE "k8s"}}
 {{$NET_POLICY_L7_ENABLED := DefaultParam .CL2_NET_POLICY_L7_ENABLED false}}
 {{$CILIUM_POLICY_IMPORTS_ERROR_THRESHOLD := DefaultParam .CL2_CILIUM_POLICY_IMPORTS_ERROR_THRESHOLD 0}}
 {{$CILIUM_ENDPOINT_REGEN_FAIL_PERC_THRESHOLD := DefaultParam .CL2_CILIUM_ENDPOINT_REGEN_FAIL_PERC_THRESHOLD 0.01}}
 {{$NUMBER_OF_SERVERS := DefaultParam .CL2_NUMBER_OF_SERVERS 5}}
+{{$L3_L4_PORT := DefaultParam .CL2_L3_L4_PORT false}}
 {{$TARGET_GROUP := DefaultParam .CL2_TARGET_GROUP "service-discovery"}}
 {{$TARGET_NAMESPACE_COUNT := DefaultParam .CL2_TARGET_NAMESPACE_COUNT 1}}
 
@@ -130,12 +131,13 @@ steps:
     Method: NetworkPolicyEnforcement
     Params:
       action: setup
-      targetLabelKey: {{.CL2_NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_KEY}}
-      targetLabelValue: {{.CL2_NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_VALUE}}
-      testClientNodeSelectorKey: {{.CL2_NET_POLICY_ENFORCEMENT_LATENCY_NODE_LABEL_KEY}}
-      testClientNodeSelectorValue: {{.CL2_NET_POLICY_ENFORCEMENT_LATENCY_NODE_LABEL_VALUE}}
+      targetLabelKey: net-pol-test
+      targetLabelValue: enforcement-latency
+      testClientNodeSelectorKey: test
+      testClientNodeSelectorValue: net-policy-client
       networkPolicyType: {{$NET_POLICY_TYPE}}
       l7Enabled: {{$NET_POLICY_L7_ENABLED}}
+      l3l4port: {{$L3_L4_PORT}}
       targetPort: 80
       baseline: {{$NETWORK_POLICY_ENFORCEMENT_LATENCY_BASELINE}}
 # 5. Start target deployments
@@ -165,8 +167,8 @@ steps:
       objectTemplatePath: target_deployment.yaml
       templateFillMap:
         Replicas: {{$NUMBER_OF_SERVERS}}
-        TargetLabelKey: {{$NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_KEY}}
-        TargetLabelValue: {{$NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_VALUE}}
+        TargetLabelKey: net-pol-test
+        TargetLabelValue: enforcement-latency
         SvcName: small-service
         Group: {{$TARGET_GROUP}}
         deploymentLabel: start
@@ -188,11 +190,18 @@ steps:
       testType: policy-creation
       targetPort: 80
       networkPolicyType: cilium
-      l7Enabled: true
+      l7Enabled: {{$NET_POLICY_L7_ENABLED}}
+      l3l4port: {{$L3_L4_PORT}}
       maxTargets: {{$NET_POLICY_ENFORCEMENT_LATENCY_MAX_TARGET_PODS_PER_NS}}
       policyLoadCount: {{$NET_POLICY_ENFORCEMENT_LOAD_COUNT}}
       policyLoadQPS: {{$NET_POLICY_ENFORCEMENT_LOAD_QPS}}
       policyLoadTargetBaseName: {{$NET_POLICY_ENFORCEMENT_LOAD_TARGET_NAME}}
+- name: Sleep
+  measurements:
+  - Identifier: sleep
+    Method: Sleep
+    Params:
+      duration: 60s
 # 9. Gather cilium agent metrics for network policy enforcement latency
 - name: "Gather cilium agent metrics for network policy enforcement latency"
   measurements:

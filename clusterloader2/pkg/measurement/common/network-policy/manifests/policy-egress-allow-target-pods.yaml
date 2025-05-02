@@ -17,6 +17,12 @@ spec:
 {{if .OnlyTargetNamespace}}
         k8s:io.kubernetes.pod.namespace: {{.TargetNamespace}}
 {{end}}
+{{if .L3L4Port}}
+    toPorts:
+    - ports: 
+      - port: "{{.TargetPort}}"
+        protocol: TCP
+{{end}}
 {{if .L7Enabled}}
     toPorts:
     - ports:
@@ -44,6 +50,12 @@ spec:
         net-pol-test: {{.TargetLabelValue}}
 {{if .OnlyTargetNamespace}}
         k8s:io.kubernetes.pod.namespace: {{.TargetNamespace}}
+{{end}}
+{{if .L3L4Port}}
+    toPorts:
+    - ports: 
+      - port: "{{.TargetPort}}"
+        protocol: TCP
 {{end}}
 {{if .L7Enabled}}
     toPorts:

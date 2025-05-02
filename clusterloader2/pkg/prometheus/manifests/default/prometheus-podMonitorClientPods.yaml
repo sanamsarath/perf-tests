@@ -1,0 +1,25 @@
+
+{{$CLIENT_POD_MONITOR := DefaultParam .CL2_CLIENT_POD_MONITOR false}}
+
+{{if $CLIENT_POD_MONITOR }}
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  labels:
+    app: client
+  name: slo-1-pods
+  namespace: monitoring
+spec:
+  podMetricsEndpoints:
+    - interval: 120s
+      port: http
+  jobLabel: client-app
+  selector:
+    matchLabels:
+      app: client
+  namespaceSelector:
+    matchNames:
+      - np-soak-client
+      
+{{end}}

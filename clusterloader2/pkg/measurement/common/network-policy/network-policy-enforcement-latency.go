@@ -118,6 +118,10 @@ type networkPolicyEnforcementMeasurement struct {
 	l7Enabled bool
 	// l7 port
 	l7Port int
+
+	l3l4port bool
+
+	targetPort int
 }
 
 // Execute - Available actions:
@@ -198,7 +202,16 @@ func (nps *networkPolicyEnforcementMeasurement) initializeMeasurement(config *me
 		return err
 	}
 
-	if nps.testClientNodeSelectorValue, err = util.GetString(config.Params, "testClientNodeSelectorValue"); err != nil {
+	if nps.l3l4port, err = util.GetBoolOrDefault(config.Params, "l3l4port", false); err != nil {
+		return err
+	}
+
+	nps.targetPort, err = util.GetIntOrDefault(config.Params, "targetPort", 80)
+	if err != nil {
+		return err
+	}
+
+	if nps.testClientNodeSelectorValue, err = util.GetStringOrDefault(config.Params, "testClientNodeSelectorValue", "net-pol-client"); err != nil {
 		return err
 	}
 
@@ -268,11 +281,6 @@ func (nps *networkPolicyEnforcementMeasurement) run(config *measurement.Config) 
 		return fmt.Errorf("the %q is not set up. Execute with the `setup` action before with the `run` action", networkPolicyEnforcementName)
 	}
 
-	targetPort, err := util.GetIntOrDefault(config.Params, "targetPort", 80)
-	if err != nil {
-		return err
-	}
-
 	maxTargets, err := util.GetIntOrDefault(config.Params, "maxTargets", 1000)
 	if err != nil {
 		return err
@@ -292,7 +300,7 @@ func (nps *networkPolicyEnforcementMeasurement) run(config *measurement.Config) 
 		"Namespace":                   nps.testClientNamespace,
 		"TestClientLabel":             netPolicyTestClientName,
 		"TargetLabelSelector":         fmt.Sprintf("net-pol-test = %s", nps.targetLabelValue),
-		"TargetPort":                  targetPort,
+		"TargetPort":                  nps.targetPort,
 		"MetricsPort":                 metricsPort,
 		"ServiceAccountName":          netPolicyTestClientName,
 		"MaxTargets":                  maxTargets,
@@ -356,7 +364,6 @@ func (nps *networkPolicyEnforcementMeasurement) runPolicyCreationTest(depTemplat
 	if err != nil {
 		klog.Warningf("Not all %d policy creation test client pods are running after %v", len(nps.targetNamespaces), timeout)
 	}
-
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	// Create load policies while allow policies are being created to take network
@@ -412,6 +419,8 @@ func (nps *networkPolicyEnforcementMeasurement) createPolicyToTargetPods(policyN
 		"Namespace":       nps.testClientNamespace,
 		"TypeLabelValue":  testType,
 		"ClientNamespace": nps.testClientNamespace,
+		"L3L4Port": 	   nps.l3l4port,
+		"TargetPort":	   nps.targetPort,
 	}
 
 	if allowForTargetPods {
@@ -611,8 +620,36 @@ func (nps *networkPolicyEnforcementMeasurement) cleanUp() error {
 		klog.Warningf("Failed to delete network policies, error: %v", err)
 	}
 
-	klog.V(2).Infof("Deleting namespace %q for measurement %q", nps.testClientNamespace, networkPolicyEnforcementName)
-	return nps.k8sClient.CoreV1().Namespaces().Delete(context.TODO(), nps.testClientNamespace, metav1.DeleteOptions{})
+    klog.V(2).Infof("Deleting namespace %q for measurement %q", nps.testClientNamespace, networkPolicyEnforcementName)
+    if err := nps.k8sClient.CoreV1().Namespaces().Delete(context.TODO(), nps.testClientNamespace, metav1.DeleteOptions{}); err != nil {
+        return fmt.Errorf("failed to delete namespace %q: %v", nps.testClientNamespace, err)
+    }
+
+    // Wait for the namespace to be fully deleted
+    const (
+        timeout      = 20 * time.Minute // Adjust timeout as needed
+        pollInterval = 10 * time.Second
+    )
+    startTime := time.Now()
+    for {
+        _, err := nps.k8sClient.CoreV1().Namespaces().Get(context.TODO(), nps.testClientNamespace, metav1.GetOptions{})
+        if err != nil {
+            if strings.Contains(err.Error(), "not found") {
+                klog.V(2).Infof("Namespace %q successfully deleted", nps.testClientNamespace)
+                break
+            }
+            return fmt.Errorf("error while checking namespace deletion status: %v", err)
+        }
+
+        if time.Since(startTime) > timeout {
+            return fmt.Errorf("timed out waiting for namespace %q to be deleted", nps.testClientNamespace)
+        }
+
+        klog.V(2).Infof("Waiting for namespace %q to be deleted...", nps.testClientNamespace)
+        time.Sleep(pollInterval)
+    }
+
+	return nil
 }
 
 // String returns a string representation of the measurement.
