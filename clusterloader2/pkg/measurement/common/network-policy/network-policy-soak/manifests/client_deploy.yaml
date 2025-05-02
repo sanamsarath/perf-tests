@@ -32,27 +32,12 @@ spec:
           - "--interval=1"
           - "--workers={{.Workers}}"
           - "--destPort={{.TargetPort}}"
+          - "--destPort2={{.TargetPort2}}"
           - "--destPath={{.TargetPath}}"
           resources: 
             requests: 
               cpu: "20m"
               memory: "40Mi"
-{{if .cnpTestL3L4}}
-        - image: acnpublic.azurecr.io/sanamsarath/netloader:0.7
-          name: netloader-9090
-          args:
-          - "--dest_labelSelector={{.TargetLabelKey}}={{.TargetLabelValue}}"
-          - "--namespace={{.TargetNamespace}}"
-          - "--duration={{.Duration}}"
-          - "--interval=1"
-          - "--workers={{.Workers}}"
-          - "--destPort={{.TargetPort2}}"
-          - "--destPath={{.TargetPath}}"
-          resources: 
-            requests: 
-              cpu: "20m"
-              memory: "40Mi"
-{{end}}
       tolerations:
       - key: "node.kubernetes.io/not-ready"
         operator: "Exists"

@@ -334,6 +334,9 @@ func (m *NetworkPolicySoakMeasurement) deployAPIServerNetworkPolicy() error {
 }
 
 func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
+
+	klog.Infof("l7Enabled: %v", m.l7Enabled)
+
 	templateMap := map[string]interface{}{
 		"ClientNamespace":    clientNamespace,
 		"ClientLabelKey":     m.clientLabelKey,
@@ -359,6 +362,8 @@ func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
 func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 	// Usually server/target pods replicas are not large, so they should be up and running in a short time
 	klog.Infof("Deploying client pods")
+	klog.Infof("cnpTestL3L4: %v", m.cnpTestL3L4)
+	klog.Infof("targetPort2: %v", m.targetPort2)
 
 	// convert the test duration to seconds
 	duration := int(m.testDuration.Seconds())
