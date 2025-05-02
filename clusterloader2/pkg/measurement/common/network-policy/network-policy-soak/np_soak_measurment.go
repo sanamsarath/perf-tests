@@ -56,9 +56,12 @@ type NetworkPolicySoakMeasurement struct {
 	targetReplicasPerNs  int
 	clientReplicasPerDep int
 	targetPort           int
+	targetPort2			 int
 	targetPath           string
 	testEndTime          time.Time
 	workerPerClient      int
+	l7Enabled 			 bool
+	cnpTestL3L4		     bool
 	npType               string
 	// gatherers
 	gatherers                *gatherers.ContainerResourceGatherer
@@ -191,6 +194,18 @@ func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config) er
 		return fmt.Errorf("phase: start, %s: failed to get target port: %v", m.String(), err)
 	}
 
+	if m.targetPort2, err = util.GetIntOrDefault(config.Params, "targetPort2", 90); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to get target port 2: %v", m.String(), err)
+	}
+
+	if m.l7Enabled, err = util.GetBoolOrDefault(config.Params, "l7Enabled", false); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to get l7 enabled: %v", m.String(), err)
+	}
+
+	if m.cnpTestL3L4, err = util.GetBoolOrDefault(config.Params, "cnpTestL3L4", false); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to get cnpTestL3L4: %v", m.String(), err)
+	}
+
 	if m.targetPath, err = util.GetStringOrDefault(config.Params, "targetPath", "/"); err != nil {
 		return fmt.Errorf("phase: start, %s: failed to get target path: %v", m.String(), err)
 	}
@@ -257,6 +272,8 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
 			"TargetLabelValue": m.targetLabelVal,
 			"Replicas":         m.targetReplicasPerNs,
 			"TargetPort":       m.targetPort,
+			"TargetPort2": 		m.targetPort2,
+			"cnpTestL3L4": 	    m.cnpTestL3L4,
 			// generate unique key and value for each deployment batch
 			// this will be used to wait for the pods to be ready by matching the label selector
 			"TargetDeploymentLabelKey":   fmt.Sprintf("%s-%d", m.targetLabelKey, i),
@@ -324,6 +341,7 @@ func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
 		"TargetLabelKey":     m.targetLabelKey,
 		"TargetLabelValue":   m.targetLabelVal,
 		"TargetPort":         strconv.Itoa(m.targetPort),
+		"L7Enabled":		  m.l7Enabled,
 		"TargetPath":         m.targetPath,
 		"NetworkPolicy_Type": m.npType,
 	}
@@ -359,6 +377,8 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 			"TargetLabelKey":   m.targetLabelKey,
 			"TargetLabelValue": m.targetLabelVal,
 			"TargetPort":       m.targetPort,
+			"TargetPort2":      m.targetPort2,
+			"cnpTestL3L4": 	    m.cnpTestL3L4,
 			"TargetPath":       m.targetPath,
 			"Duration":         duration,
 			"Replicas":         m.clientReplicasPerDep,
