@@ -5,6 +5,7 @@
 {{$TARGET_PORT2 := DefaultParam .CL2_TARGET_PORT2 90}}
 {{$WORKERS_PER_CLIENT := DefaultParam .CL2_WORKERS_PER_CLIENT 5}}
 {{$DURATION := DefaultParam .CL2_DURATION 600}}
+{{$repeats := DefaultParam .CL2_REPEATS 1}}
 {{$Network_Policy_Type := DefaultParam .CL2_NETWORK_POLICY_TYPE "k8s"}}
 {{$NET_POLICY_L7_ENABLED := DefaultParam .CL2_NET_POLICY_L7_ENABLED false}}
 {{$L3_L4_CNP_TEST := DefaultParam .CL2_L3_L4_CNP_TEST false}}
@@ -150,6 +151,8 @@ spec:
         - name: envoy_memory_heap_size_max
           query: max(max_over_time(envoy_server_memory_heap_size[%v:])) / 1024 / 1024
 # 4. start network performance measurement (setup and run)
+
+{{range $i := Loop $repeats}}
 - name: Network Policy Soak Test - Start
   measurements:
   - Identifier: NetworkPolicySoakMeasurement
@@ -202,6 +205,7 @@ spec:
     Method: NetworkPolicySoakMeasurement
     Params:
       action: delete-pods
+{{end}}
 # 5. gather network performance measurement (wait and gather results)
 - name: Network Policy Soak Test - Gather Results
   measurements:
