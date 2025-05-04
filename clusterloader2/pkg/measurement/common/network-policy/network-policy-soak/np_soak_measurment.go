@@ -87,6 +87,12 @@ func (m *NetworkPolicySoakMeasurement) Execute(config *measurement.Config) ([]me
 		return m.start(config)
 	case "gather":
 		return m.gather()
+	case "restart":
+		return m.restart(config)
+	case "delete-ccnps-cnps":
+		return m.deleteNetworkPolicies()
+	case "delete-pods":
+		return m.deletePods()
 	default:
 		return nil, fmt.Errorf("unknown action: %s", action)
 	}
@@ -97,7 +103,7 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 		return nil, fmt.Errorf("phase: start, %s: measurement already running", m.String())
 	}
 
-	if err := m.initialize(config); err != nil {
+	if err := m.initialize(config, "start"); err != nil {
 		return nil, err
 	}
 
@@ -112,7 +118,7 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 	}
 
 	// deploy the target pods
-	if err := m.deployTargetPods(); err != nil {
+	if err := m.deployTargetPods("start"); err != nil {
 		return nil, err
 	}
 
@@ -127,7 +133,7 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 	}
 
 	// deploy the client pods
-	if err := m.deployClientPods(); err != nil {
+	if err := m.deployClientPods("start"); err != nil {
 		return nil, err
 	}
 
@@ -142,14 +148,99 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 	return nil, nil
 }
 
-func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config) error {
+func (nps *NetworkPolicySoakMeasurement) deleteNetworkPolicies() ([]measurement.Summary, error) {
+
+	dynamicClient := nps.framework.GetDynamicClients().GetClient()
+
+	switch nps.npType {
+	case "k8s":
+		return nil, nil
+	case "ccnp":
+		// Define the GVR for CiliumClusterwideNetworkPolicy
+		ccnpGVR := schema.GroupVersionResource{
+			Group:    "cilium.io",
+			Version:  "v2",
+			Resource: "ciliumclusterwidenetworkpolicies",
+		}
+
+		if err := dynamicClient.Resource(ccnpGVR).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+			klog.Errorf("failed to delete CiliumClusterwideNetworkPolicy, error: %v", err)
+		}
+
+		if err := dynamicClient.Resource(ccnpGVR).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+			klog.Errorf("failed to delete CiliumClusterwideNetworkPolicy , error: %v",err)
+		}
+	case "cnp":
+		// Define the GVR for CiliumNetworkPolicy
+		cnpGVR := schema.GroupVersionResource{
+			Group:    "cilium.io",
+			Version:  "v2",
+			Resource: "ciliumnetworkpolicies",
+		}
+
+		if err := dynamicClient.Resource(cnpGVR).Namespace(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+			klog.Errorf("failed to delete CiliumNetworkPolicy in ns:%s, error: %v", clientNamespace, err)
+		}
+	}
+	return nil, nil
+}
+
+
+
+func (m *NetworkPolicySoakMeasurement) deletePods() ([]measurement.Summary, error) {
+	
+	// delete client pods
+	if err := m.k8sClient.AppsV1().Deployments(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+		klog.Errorf("phase: delete-pods, %s: failed to delete client deployments: %v", m.String(), err)
+	}
+	
+	// clear target deployments from all the target namespaces using label selector
+	labelSelector := fmt.Sprintf("%s=%s", m.targetLabelKey, m.targetLabelVal)
+	for _, ns := range m.targetNamespaces {
+		if err := m.k8sClient.AppsV1().Deployments(ns).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelector}); err != nil {
+			klog.Errorf("phase: delete-pods, %s NS: %s, failed to delete target deployments: %v", m.String(), ns, err)
+		}
+		// add a delay to avoid API server throttling,
+		// wait for 500ms before deleting the next deployment
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return nil, nil
+}
+
+func (m *NetworkPolicySoakMeasurement) restart(config *measurement.Config) ([]measurement.Summary, error) {
+	if !m.isRunning {
+		return nil, fmt.Errorf("phase: restart, %s: measurement is not running", m.String())
+	}
+
+	if err := m.initialize(config, "restart"); err != nil {
+		return nil, err
+	}
+
+	// deploy the target pods
+	if err := m.deployTargetPods("restart"); err != nil {
+		return nil, err
+	}
+
+	// deploy the client pods
+	if err := m.deployClientPods("restart"); err != nil {
+		return nil, err
+	}
+
+	m.isRunning = true
+	return nil, nil
+
+
+}
+
+func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config, phase string) error {
 	// initialization
 	m.k8sClient = config.ClusterFramework.GetClientSets().GetClient()
 	m.framework = config.ClusterFramework
 
 	namespaceList, err := m.k8sClient.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("phase: start, %s: failed to list namespaces: %v", m.String(), err)
+		return fmt.Errorf("phase: %s, %s: failed to list namespaces: %v", phase, m.String(), err)
 	}
 
 	// target namespaces are automanagered by the framework
@@ -253,10 +344,10 @@ func (m *NetworkPolicySoakMeasurement) deployRBACResources() error {
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
+func (m *NetworkPolicySoakMeasurement) deployTargetPods(phase string) error {
 	// Validate that the replica count is positive
 	if m.targetReplicasPerNs <= 0 {
-		return fmt.Errorf("phase: start, %s: invalid target replicas per namespace: %d", m.String(), m.targetReplicasPerNs)
+		return fmt.Errorf("phase: %s, %s: invalid target replicas per namespace: %d", phase, m.String(), m.targetReplicasPerNs)
 	}
 
 	depBatchSize := 50
@@ -282,7 +373,7 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
 		for _, ns := range m.targetNamespaces[i:end] {
 			batchTemplateMap["TargetNamespace"] = ns
 			if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, batchTemplateMap); err != nil {
-				return fmt.Errorf("phase: start, %s NS: %s, failed to apply target deployment manifest: %v", m.String(), ns, err)
+				return fmt.Errorf("phase: %s, %s NS: %s, failed to apply target deployment manifest: %v", phase, m.String(), ns, err)
 			}
 		}
 
@@ -292,7 +383,7 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods() error {
 		waitSeconds := math.Max(60.0, float64(desiredBatchPodCount)*0.5)
 		targetWaitCtx, targetWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitSeconds)*time.Second)
 		if err := m.waitForDeploymentPodsReady(targetWaitCtx, desiredBatchPodCount, labelSelector); err != nil {
-			klog.Warningf("phase: start, %s: failed to wait for target pods to be ready: %v", m.String(), err)
+			klog.Warningf("phase: %s, %s: failed to wait for target pods to be ready: %v", phase, m.String(), err)
 		}
 		targetWaitCancel() // Explicitly cancel the context immediately after waiting.
 	}
@@ -359,11 +450,9 @@ func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
+func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 	// Usually server/target pods replicas are not large, so they should be up and running in a short time
 	klog.Infof("Deploying client pods")
-	klog.Infof("cnpTestL3L4: %v", m.cnpTestL3L4)
-	klog.Infof("targetPort2: %v", m.targetPort2)
 
 	// convert the test duration to seconds
 	duration := int(m.testDuration.Seconds())
@@ -397,7 +486,7 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 			batchTemplateMap["TargetNamespace"] = ns
 			batchTemplateMap["UniqueName"] = ns // use the target namespace name as the deployment name
 			if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, batchTemplateMap); err != nil {
-				return fmt.Errorf("phase: start, %s NS: %s, failed to apply client deployment manifest: %v", m.String(), ns, err)
+				return fmt.Errorf("phase: %s, %s NS: %s, failed to apply client deployment manifest: %v", phase, m.String(), ns, err)
 			}
 		}
 
@@ -407,7 +496,7 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods() error {
 		waitDuration := math.Max(60.0, float64(desiredBatchPodCount)*0.5)
 		clientWaitCtx, clientWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitDuration)*time.Second)
 		if err := m.waitForDeploymentPodsReady(clientWaitCtx, desiredBatchPodCount, labelSelector); err != nil {
-			klog.Warningf("phase: start, %s: failed to wait for client pods to be ready: %v", m.String(), err)
+			klog.Warningf("phase: %s, %s: failed to wait for client pods to be ready: %v", phase, m.String(), err)
 		}
 		clientWaitCancel() // cancel context immediately after waiting
 	}
@@ -537,17 +626,8 @@ func (m *NetworkPolicySoakMeasurement) Dispose() {
 		klog.Errorf("phase: gather, %s: failed to delete service account: %v", m.String(), err)
 	}
 
-	// Define the GVR for CiliumClusterwideNetworkPolicy
-	cnpGVR := schema.GroupVersionResource{
-		Group:    "cilium.io",
-		Version:  "v2",
-		Resource: "ciliumnetworkpolicies",
-	}
-	// delete cilium network policies in all the client namespaces
-	dynamicClient := m.framework.GetDynamicClients().GetClient()
-	if err := dynamicClient.Resource(cnpGVR).Namespace(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
-		klog.Errorf("phase: gather, %s: failed to delete cilium network policies: %v", m.String(), err)
-	}
+	//delete cnps & or ccnps
+	m.deleteNetworkPolicies()
 
 	// delete client pods
 	if err := m.k8sClient.AppsV1().Deployments(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {

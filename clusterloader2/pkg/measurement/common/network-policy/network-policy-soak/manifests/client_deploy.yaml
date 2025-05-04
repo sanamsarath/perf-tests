@@ -23,7 +23,7 @@ spec:
         node: "client"
       serviceAccountName: {{.ClientName}}-sa
       containers:
-        - image: acnpublic.azurecr.io/sanamsarath/netloader:0.7
+        - image: acnpublic.azurecr.io/karanadive/netloader:0.7 
           name: netloader-8080
           args:
           - "--dest_labelSelector={{.TargetLabelKey}}={{.TargetLabelValue}}"

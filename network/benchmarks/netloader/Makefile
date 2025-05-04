@@ -1,4 +1,4 @@
-USERNAME ?= sanamsarath
+USERNAME ?= karanadive
 PROJECT ?= netloader
 REGISTRY ?= acnpublic.azurecr.io
 IMG ?= $(USERNAME)/$(PROJECT)

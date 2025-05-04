@@ -17,17 +17,17 @@ func NewHttpMetrics() *HttpMetrics {
 	requestsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "http_requests_total",
 		Help: "Total number of HTTP requests",
-	}, []string{"count"})
+	}, []string{"count", "port"})
 
 	requestsSuccess := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "http_requests_success",
 		Help: "Total number of successful HTTP requests",
-	}, []string{"count"})
+	}, []string{"count", "port"})
 
 	requestsFail := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "http_requests_fail",
 		Help: "Total number of failed HTTP requests",
-	}, []string{"count"})
+	}, []string{"count", "port"})
 
 	latencies := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "http_request_latency_seconds",

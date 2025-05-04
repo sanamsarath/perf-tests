@@ -196,8 +196,8 @@ func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, ipChan <-ch
 				if err != nil {
 					klog.Errorf("http request failed: %v", err)
 					// Inc total and fail counters
-					c.HttpMetrics.requestsTotal.WithLabelValues("total").Inc()
-					c.HttpMetrics.requestsFail.WithLabelValues("fail").Inc()
+					c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
+					c.HttpMetrics.requestsFail.WithLabelValues("fail", dPort).Inc()
 					continue
 				}
 
@@ -208,8 +208,8 @@ func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, ipChan <-ch
 				}
 
 				// Inc total and success counters
-				c.HttpMetrics.requestsTotal.WithLabelValues("total").Inc()
-				c.HttpMetrics.requestsSuccess.WithLabelValues("success").Inc()
+				c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
+				c.HttpMetrics.requestsSuccess.WithLabelValues("success", dPort).Inc()
 				resp.Body.Close()
 			}
 		}
