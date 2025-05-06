@@ -188,7 +188,7 @@ steps:
       testType: policy-creation
       targetPort: 80
       networkPolicyType: cilium
-      l7Enabled: true
+      l7Enabled: {{$NET_POLICY_L7_ENABLED}}
       maxTargets: {{$NET_POLICY_ENFORCEMENT_LATENCY_MAX_TARGET_PODS_PER_NS}}
       policyLoadCount: {{$NET_POLICY_ENFORCEMENT_LOAD_COUNT}}
       policyLoadQPS: {{$NET_POLICY_ENFORCEMENT_LOAD_QPS}}

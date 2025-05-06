@@ -88,7 +88,7 @@ func (m *NetworkPolicySoakMeasurement) Execute(config *measurement.Config) ([]me
 	case "gather":
 		return m.gather()
 	case "restart":
-		return m.restart(config)
+		return m.restart()
 	case "delete-ccnps-cnps":
 		return m.deleteNetworkPolicies()
 	case "delete-pods":
@@ -99,7 +99,7 @@ func (m *NetworkPolicySoakMeasurement) Execute(config *measurement.Config) ([]me
 }
 
 func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]measurement.Summary, error) {
-	if m.isRunning {
+	if m.isRunning && !m.cnpTestL3L4 {
 		return nil, fmt.Errorf("phase: start, %s: measurement already running", m.String())
 	}
 
@@ -208,14 +208,8 @@ func (m *NetworkPolicySoakMeasurement) deletePods() ([]measurement.Summary, erro
 	return nil, nil
 }
 
-func (m *NetworkPolicySoakMeasurement) restart(config *measurement.Config) ([]measurement.Summary, error) {
-	if !m.isRunning {
-		return nil, fmt.Errorf("phase: restart, %s: measurement is not running", m.String())
-	}
+func (m *NetworkPolicySoakMeasurement) restart() ([]measurement.Summary, error) {
 
-	if err := m.initialize(config, "restart"); err != nil {
-		return nil, err
-	}
 
 	// deploy the target pods
 	if err := m.deployTargetPods("restart"); err != nil {
@@ -227,7 +221,6 @@ func (m *NetworkPolicySoakMeasurement) restart(config *measurement.Config) ([]me
 		return nil, err
 	}
 
-	m.isRunning = true
 	return nil, nil
 
 
@@ -365,6 +358,7 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods(phase string) error {
 			"TargetPort":       m.targetPort,
 			"TargetPort2": 		m.targetPort2,
 			"cnpTestL3L4": 	    m.cnpTestL3L4,
+			"DeploymentLabel":  phase,
 			// generate unique key and value for each deployment batch
 			// this will be used to wait for the pods to be ready by matching the label selector
 			"TargetDeploymentLabelKey":   fmt.Sprintf("%s-%d", m.targetLabelKey, i),
@@ -372,11 +366,18 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods(phase string) error {
 		}
 		for _, ns := range m.targetNamespaces[i:end] {
 			batchTemplateMap["TargetNamespace"] = ns
-			if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, batchTemplateMap); err != nil {
-				return fmt.Errorf("phase: %s, %s NS: %s, failed to apply target deployment manifest: %v", phase, m.String(), ns, err)
+			if phase == "start" {
+				if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, batchTemplateMap); err != nil {
+					return fmt.Errorf("phase: %s, %s NS: %s, failed to apply target deployment manifest: %v", phase, m.String(), ns, err)
+				}
+
+			} else {
+				if err := m.framework.UpdateTemplatedManifests(manifestsFS, targetFilePath, batchTemplateMap); err != nil {
+					return fmt.Errorf("phase: %s, %s NS: %s, failed to update target deployment manifest: %v", phase, m.String(), ns, err)
+				}
+
 			}
 		}
-
 		// Wait for the current batch deployments to be ready.
 		labelSelector := fmt.Sprintf("%s=%s", batchTemplateMap["TargetDeploymentLabelKey"], batchTemplateMap["TargetDeploymentLabelValue"])
 		desiredBatchPodCount := (end - i) * m.targetReplicasPerNs
@@ -460,6 +461,7 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 	for i := 0; i < len(m.targetNamespaces); i += clientBatchSize {
 		end := i + clientBatchSize
 		if end > len(m.targetNamespaces) {
+			klog.Infof("in if statement")
 			end = len(m.targetNamespaces)
 		}
 		// Create a new template map per batch to avoid reuse issues.
@@ -473,6 +475,7 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 			"TargetPort":       m.targetPort,
 			"TargetPort2":      m.targetPort2,
 			"cnpTestL3L4": 	    m.cnpTestL3L4,
+			"DeploymentLabel":	phase,
 			"TargetPath":       m.targetPath,
 			"Duration":         duration,
 			"Replicas":         m.clientReplicasPerDep,
@@ -485,14 +488,25 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 		for _, ns := range m.targetNamespaces[i:end] {
 			batchTemplateMap["TargetNamespace"] = ns
 			batchTemplateMap["UniqueName"] = ns // use the target namespace name as the deployment name
-			if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, batchTemplateMap); err != nil {
-				return fmt.Errorf("phase: %s, %s NS: %s, failed to apply client deployment manifest: %v", phase, m.String(), ns, err)
+			klog.Infof("Deployment label, %s", batchTemplateMap["DeploymentLabel"])
+			if phase == "start" { 
+				if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, batchTemplateMap); err != nil {
+					return fmt.Errorf("phase: %s, %s NS: %s, failed to apply client deployment manifest: %v", phase, m.String(), ns, err)
+				}
+			} else {
+				if err := m.framework.UpdateTemplatedManifests(manifestsFS, clientFilePath, batchTemplateMap); err != nil {
+					return fmt.Errorf("phase: %s, %s NS: %s, failed to apply updated client deployment manifest: %v", phase, m.String(), ns, err)
+				}
 			}
 		}
+
+		//time.Sleep(60 * time.Second)
 
 		// Wait for the current batch client pods to be ready.
 		labelSelector := fmt.Sprintf("%s=%s", batchTemplateMap["ClientDeploymentLabelKey"], batchTemplateMap["ClientDeploymentLabelValue"])
 		desiredBatchPodCount := (end - i) * m.clientReplicasPerDep
+		klog.Infof("clientreplicas per dep %v", m.clientReplicasPerDep)
+		klog.Infof("end - i %v", end - i)
 		waitDuration := math.Max(60.0, float64(desiredBatchPodCount)*0.5)
 		clientWaitCtx, clientWaitCancel := context.WithTimeout(context.TODO(), time.Duration(waitDuration)*time.Second)
 		if err := m.waitForDeploymentPodsReady(clientWaitCtx, desiredBatchPodCount, labelSelector); err != nil {

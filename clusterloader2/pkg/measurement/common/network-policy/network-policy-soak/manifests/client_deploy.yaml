@@ -9,6 +9,11 @@ metadata:
   namespace: {{.ClientNamespace}}
 spec:
   replicas: {{.Replicas}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 20%
+      maxSurge: 20%
   selector:
     matchLabels:
       {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
@@ -16,6 +21,7 @@ spec:
   template:
     metadata:
       labels:
+        phase: {{.DeploymentLabel}}
         {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
         {{ (StructuralData .ClientDeploymentLabelKey)}}: {{.ClientDeploymentLabelValue}}
     spec:
@@ -25,6 +31,7 @@ spec:
       containers:
         - image: acnpublic.azurecr.io/karanadive/netloader:0.7 
           name: netloader-8080
+          imagePullPolicy: Always
           args:
           - "--dest_labelSelector={{.TargetLabelKey}}={{.TargetLabelValue}}"
           - "--namespace={{.TargetNamespace}}"

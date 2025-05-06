@@ -28,26 +28,26 @@ steps:
 # 6. gather resource usage metrics
 # 7. gather cilium envoy metrics
 # 8. gather cilium agent metrics
-{{if $L3_L4_CNP_TEST}}
-apiVersion: monitoring.coreos.com/v1
-kind: PodMonitor
-metadata:
-  labels:
-    app: client
-  name: slo-1-pods
-  namespace: monitoring
-spec:
-  podMetricsEndpoints:
-    - interval: 120s
-      port: 8080
-  jobLabel: client-app
-  selector:
-    matchLabels:
-      app: client
-  namespaceSelector:
-    matchNames:
-      - np-soak-client
-{{end}}
+{{- if .Values.L3_L4_CNP_TEST }}
+  - apiVersion: monitoring.coreos.com/v1
+    kind: PodMonitor
+    metadata:
+      labels:
+        app: client
+      name: slo-1-pods
+      namespace: monitoring
+    spec:
+      podMetricsEndpoints:
+        - interval: 120s
+          port: 8080
+      jobLabel: client-app
+      selector:
+        matchLabels:
+          app: client
+      namespaceSelector:
+        matchNames:
+          - np-soak-client
+{{- end }}
 # 1. start cilium agent metrics
 - name: Cilium Agent Metrics
   measurements:
@@ -79,6 +79,39 @@ spec:
         query: quantile(0.90, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
       - name: Perc50
         query: quantile(0.5, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+  - Identifier: MaxHttpRequestsTotal
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Max number of HTTP Requests Total
+      metricVersion: v1
+      unit: count
+      enableViolations: true
+      queries:
+      - name: max number of http requests total over time
+        query: max(max_over_time(http_requests_total[%v:]))
+  - Identifier: MaxHttpRequestsFail
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Max number of HTTP Requests Fail
+      metricVersion: v1
+      unit: count
+      enableViolations: true
+      queries:
+      - name: max number of http requests fail over time
+        query: max(max_over_time(http_requests_fail[%v:]))
+  - Identifier: MaxHttpRequestsSuccess
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Max number of HTTP Requests Success
+      metricVersion: v1
+      unit: count
+      enableViolations: true
+      queries:
+      - name: max number of http requests success over time
+        query: max(max_over_time(http_requests_success[%v:]))
   - Identifier: CiliumAgentMaxCPUUsage
     Method: GenericPrometheusQuery
     Params:
@@ -179,32 +212,18 @@ spec:
     Method: NetworkPolicySoakMeasurement
     Params:
       action: restart
-      targetLabelKey: app
-      targetLabelValue: target
-      clientLabelKey: app
-      clientLabelValue: client
-      targetReplicasPerNs: {{$NUMBER_OF_SERVERS_PER_Group}}
-      clientReplicasPerDep: {{$NUMBER_OF_CLIENTS_PER_Group}}
-      targetPort: {{$TARGET_PORT}}
-      targetPort2: {{$TARGET_PORT2}}
-      l7Enabled: {{$NET_POLICY_L7_ENABLED}}
-      cnpTestL3L4: {{$L3_L4_CNP_TEST}}
-      targetPath: /
-      testDuration: "{{$DURATION}}"
-      workerPerClient: {{$WORKERS_PER_CLIENT}}
-      npType: {{$Network_Policy_Type}}
-- name: Network Policy Soak Test - Delete CNPS
-  measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
-    Params:
-      action: delete-ccnps-cnps
-- name: Network Policy Soak Test - Delete Pods
-  measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
-    Params:
-      action: delete-pods
+# - name: Network Policy Soak Test - Delete CNPS
+#   measurements:
+#   - Identifier: NetworkPolicySoakMeasurement
+#     Method: NetworkPolicySoakMeasurement
+#     Params:
+#       action: delete-ccnps-cnps
+# - name: Network Policy Soak Test - Delete Pods
+#   measurements:
+#   - Identifier: NetworkPolicySoakMeasurement
+#     Method: NetworkPolicySoakMeasurement
+#     Params:
+#       action: delete-pods
 {{end}}
 # 5. gather network performance measurement (wait and gather results)
 - name: Network Policy Soak Test - Gather Results
@@ -249,8 +268,24 @@ spec:
       Params:
         action: gather
         enableViolations: true
-# IF SOAK_TEST, GATHER ENVOY MEMORY METRICS 1 HOUR AFTER THE TEST
-# TO VERIFY MEMORY LEAKS
+- name: Client Metrics
+  measurements: 
+    - Identifier: MaxHttpRequestsTotal
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: MaxHttpRequestsFail
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: MaxHttpRequestsSuccess
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+# IF SOAK_TEST, GATHER ENVOY MEMORY METRICS 1 HOUR AFTER THE TEST TO VERIFY MEMORY LEAKS
 {{if $SOAK_TEST }}
 - name: Starting Soak metrics collection
   measurements:

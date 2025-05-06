@@ -35,6 +35,7 @@ import (
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/klog/v2"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/gengo/namer"
 	gengotypes "k8s.io/gengo/types"
@@ -280,10 +281,25 @@ func CreateObject(dynamicClient dynamic.Interface, namespace string, name string
 	obj.SetName(name)
 	createFunc := func() error {
 		_, err := dynamicClient.Resource(gvr).Namespace(namespace).Create(context.TODO(), obj, metav1.CreateOptions{})
+		if err != nil {
+			klog.Infof("Object already exists: %v", err)
+		}
 		return err
 	}
 	options = append(options, Allow(apierrs.IsAlreadyExists))
 	return RetryWithExponentialBackOff(RetryFunction(createFunc, options...))
+}
+
+func UpdateObject(dynamicClient dynamic.Interface, namespace string, name string, obj *unstructured.Unstructured, options ...*APICallOptions) error {
+	gvk := obj.GroupVersionKind()
+	gvr := pluralResource(gvk)
+	obj.SetName(name)
+	updateFunc := func() error {
+		_, err := dynamicClient.Resource(gvr).Namespace(namespace).Update(context.TODO(), obj, metav1.UpdateOptions{})
+		return err
+	}
+	options = append(options, Allow(apierrs.IsAlreadyExists))
+	return RetryWithExponentialBackOff(RetryFunction(updateFunc, options...))
 }
 
 // PatchObject updates (using patch) object with given name, group, version and kind based on given object description.
