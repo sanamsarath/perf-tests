@@ -62,6 +62,7 @@ type NetworkPolicySoakMeasurement struct {
 	workerPerClient      int
 	l7Enabled 			 bool
 	cnpTestL3L4		     bool
+	isRestart 			 bool
 	npType               string
 	// gatherers
 	gatherers                *gatherers.ContainerResourceGatherer
@@ -99,7 +100,7 @@ func (m *NetworkPolicySoakMeasurement) Execute(config *measurement.Config) ([]me
 }
 
 func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]measurement.Summary, error) {
-	if m.isRunning && !m.cnpTestL3L4 {
+	if m.isRunning && !m.isRestart {
 		return nil, fmt.Errorf("phase: start, %s: measurement already running", m.String())
 	}
 
@@ -138,12 +139,13 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 	}
 
 	// start envoy resource gatherer
-	if m.resourceGatheringEnabled {
+	if m.resourceGatheringEnabled && !m.isRestart {
 		if err := m.envoyResourceGather(); err != nil {
 			return nil, err
 		}
 	}
 
+	m.isRestart = true
 	m.isRunning = true
 	return nil, nil
 }
@@ -167,9 +169,8 @@ func (nps *NetworkPolicySoakMeasurement) deleteNetworkPolicies() ([]measurement.
 			klog.Errorf("failed to delete CiliumClusterwideNetworkPolicy, error: %v", err)
 		}
 
-		if err := dynamicClient.Resource(ccnpGVR).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
-			klog.Errorf("failed to delete CiliumClusterwideNetworkPolicy , error: %v",err)
-		}
+		time.Sleep(500 * time.Millisecond)
+	
 	case "cnp":
 		// Define the GVR for CiliumNetworkPolicy
 		cnpGVR := schema.GroupVersionResource{
@@ -181,6 +182,8 @@ func (nps *NetworkPolicySoakMeasurement) deleteNetworkPolicies() ([]measurement.
 		if err := dynamicClient.Resource(cnpGVR).Namespace(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
 			klog.Errorf("failed to delete CiliumNetworkPolicy in ns:%s, error: %v", clientNamespace, err)
 		}
+
+		time.Sleep(500 * time.Millisecond)
 	}
 	return nil, nil
 }
@@ -239,10 +242,13 @@ func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config, ph
 	// target namespaces are automanagered by the framework
 	// capture all the target namespaces
 	targetNamespacePrefix := m.framework.GetAutomanagedNamespacePrefix()
-	for _, ns := range namespaceList.Items {
-		if strings.HasPrefix(ns.Name, targetNamespacePrefix) {
-			m.targetNamespaces = append(m.targetNamespaces, ns.Name)
+	if !m.isRestart {
+		for _, ns := range namespaceList.Items {
+			if strings.HasPrefix(ns.Name, targetNamespacePrefix) {
+				m.targetNamespaces = append(m.targetNamespaces, ns.Name)
+			}
 		}
+
 	}
 
 	if len(m.targetNamespaces) == 0 {
@@ -357,7 +363,6 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods(phase string) error {
 			"Replicas":         m.targetReplicasPerNs,
 			"TargetPort":       m.targetPort,
 			"TargetPort2": 		m.targetPort2,
-			"cnpTestL3L4": 	    m.cnpTestL3L4,
 			"DeploymentLabel":  phase,
 			// generate unique key and value for each deployment batch
 			// this will be used to wait for the pods to be ready by matching the label selector
@@ -474,7 +479,6 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 			"TargetLabelValue": m.targetLabelVal,
 			"TargetPort":       m.targetPort,
 			"TargetPort2":      m.targetPort2,
-			"cnpTestL3L4": 	    m.cnpTestL3L4,
 			"DeploymentLabel":	phase,
 			"TargetPath":       m.targetPath,
 			"Duration":         duration,
@@ -500,7 +504,6 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 			}
 		}
 
-		//time.Sleep(60 * time.Second)
 
 		// Wait for the current batch client pods to be ready.
 		labelSelector := fmt.Sprintf("%s=%s", batchTemplateMap["ClientDeploymentLabelKey"], batchTemplateMap["ClientDeploymentLabelValue"])
@@ -514,6 +517,8 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 		}
 		clientWaitCancel() // cancel context immediately after waiting
 	}
+
+	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
 
 	m.testEndTime = time.Now().Add(m.testDuration)
 	return nil

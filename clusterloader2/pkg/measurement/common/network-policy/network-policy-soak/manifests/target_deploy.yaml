@@ -40,9 +40,7 @@ spec:
             memory: "30Mi"
         ports:
         - containerPort: {{.TargetPort}}
-{{if .cnpTestL3L4}}
         - containerPort: {{.TargetPort2}}
-{{end}}
       tolerations:
       - key: "node.kubernetes.io/not-ready"
         operator: "Exists"

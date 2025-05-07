@@ -1,0 +1,25 @@
+
+{{$L3_L4_CNP_TEST := DefaultParam .CL2_L3_L4_CNP_TEST false}}
+
+{{if $L3_L4_CNP_TEST }}
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  labels:
+    app: client
+  name: slo-1-pods
+  namespace: monitoring
+spec:
+  podMetricsEndpoints:
+    - interval: 120s
+      targetPort: 8080
+  jobLabel: client-app
+  selector:
+    matchLabels:
+      app: client
+  namespaceSelector:
+    matchNames:
+      - np-soak-client
+      
+{{end}}
