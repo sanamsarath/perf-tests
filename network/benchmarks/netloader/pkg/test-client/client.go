@@ -42,7 +42,9 @@ func NewTestClient(stopCh chan os.Signal) (*TestClient, error) {
 		httpClient: &http.Client{
 			Transport: &http2.Transport{
 				AllowHTTP: true,
+				IdleConnTimeout: 30 * time.Second,
 				DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+					//add timeout 
 					return net.Dial(network, addr)
 				},
 			},
@@ -174,55 +176,44 @@ func (c *TestClient) startTest() {
 	wg.Wait()
 }
 
+// update worker signature to receive string
 func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, ipChan <-chan string) {
 	defer wg.Done()
-	destPorts := []string{strconv.Itoa(c.destPort2), strconv.Itoa(c.destPort)}
+	destPorts := []string{strconv.Itoa(c.destPort), strconv.Itoa(c.destPort2)}
 	for {
 		select {
-			case <-ctx.Done():
-				klog.Info("Load duration expired, stopping worker")
-				return
-			case ip := <-ipChan:
-				var innerWg sync.WaitGroup
-				for _, dPort := range destPorts {
-					innerWg.Add(1)
-					go func(dPort string) {
-						defer innerWg.Done()
-						// url
-						url := "http://" + ip + ":" + dPort + c.destPath
-	
-						// start time
-						start := time.Now()
-	
-						// make the http request
-						klog.Infof("making request")
-						resp, err := c.httpClient.Get(url)
-						if err != nil {
-							if ctx.Err() == context.Canceled {
-								klog.Infof("Pod is terminating")
-								return
-							}
-	
-							klog.Errorf("http request failed: %v", err)
-							// Inc total and fail counters
-							c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
-							c.HttpMetrics.requestsFail.WithLabelValues("fail", dPort).Inc()
-							return
-						}
+		case <-ctx.Done():
+			klog.Info("Load duration expired, stopping worker")
+			return
+		case ip := <-ipChan:
+			for _, dPort := range destPorts {
+				// url
+				url := "http://" + ip + ":" + dPort + c.destPath
 
-						// record the latency - optional via env var
-						if os.Getenv("RECORD_LATENCY") == "true" {
-							latency := time.Since(start).Seconds()
-							c.HttpMetrics.latencies.WithLabelValues(ip).Observe(latency)
-						}
-	
-						// Inc total and success counters
-						c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
-						c.HttpMetrics.requestsSuccess.WithLabelValues("success", dPort).Inc()
-						resp.Body.Close()
-					}(dPort)
+				// start time
+				start := time.Now()
+
+				// make the http request
+				resp, err := c.httpClient.Get(url)
+				if err != nil {
+					klog.Errorf("http request failed: %v", err)
+					// Inc total and fail counters
+					c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
+					c.HttpMetrics.requestsFail.WithLabelValues("fail", dPort).Inc()
+					continue
 				}
-				innerWg.Wait()
+
+				// record the latency - optional via env var
+				if os.Getenv("RECORD_LATENCY") == "true" {
+					latency := time.Since(start).Seconds()
+					c.HttpMetrics.latencies.WithLabelValues(ip).Observe(latency)
+				}
+
+				// Inc total and success counters
+				c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
+				c.HttpMetrics.requestsSuccess.WithLabelValues("success", dPort).Inc()
+				resp.Body.Close()
+			}
 		}
 	}
-}	
+}

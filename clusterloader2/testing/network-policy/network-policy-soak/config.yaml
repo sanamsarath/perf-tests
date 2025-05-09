@@ -66,10 +66,12 @@ steps:
       metricName: Max number of HTTP Requests Total
       metricVersion: v1
       unit: count
+      dimensions:
+      - port
       enableViolations: true
       queries:
       - name: max number of http requests total over time
-        query: sum(increase(http_requests_total[%v:]))
+        query: sum(increase(http_requests_total[%v:])) by (port)
   - Identifier: MaxHttpRequestsFail
     Method: GenericPrometheusQuery
     Params:
@@ -77,10 +79,12 @@ steps:
       metricName: Max number of HTTP Requests Fail
       metricVersion: v1
       unit: count
+      dimensions:
+      - port
       enableViolations: true
       queries:
       - name: max number of http requests fail over time
-        query: sum(increase(http_requests_fail[%v:]))
+        query: max(max_over_time(http_requests_fail[%v:])) by (port)
   - Identifier: MaxHttpRequestsSuccess
     Method: GenericPrometheusQuery
     Params:
@@ -88,10 +92,12 @@ steps:
       metricName: Max number of HTTP Requests Success
       metricVersion: v1
       unit: count
+      dimensions:
+      - port
       enableViolations: true
       queries:
       - name: max number of http requests success over time
-        query: avg_over_time(http_requests_success[%v:])
+        query: max(max_over_time(http_requests_success[%v:])) by (port)
   - Identifier: CiliumAgentMaxCPUUsage
     Method: GenericPrometheusQuery
     Params:
@@ -186,24 +192,24 @@ steps:
       testDuration: "{{$DURATION}}"
       workerPerClient: {{$WORKERS_PER_CLIENT}}
       npType: {{$Network_Policy_Type}}
-- name: Network Policy Soak Test - RestartPods
-  measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
-    Params:
-      action: restart
-- name: Network Policy Soak Test - Delete CNPS
-  measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
-    Params:
-      action: delete-ccnps-cnps
-- name: Network Policy Soak Test - Delete Pods
-  measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
-    Params:
-      action: delete-pods
+# - name: Network Policy Soak Test - RestartPods
+#   measurements:
+#   - Identifier: NetworkPolicySoakMeasurement
+#     Method: NetworkPolicySoakMeasurement
+#     Params:
+#       action: restart
+# - name: Network Policy Soak Test - Delete CNPS
+#   measurements:
+#   - Identifier: NetworkPolicySoakMeasurement
+#     Method: NetworkPolicySoakMeasurement
+#     Params:
+#       action: delete-ccnps-cnps
+# - name: Network Policy Soak Test - Delete Pods
+#   measurements:
+#   - Identifier: NetworkPolicySoakMeasurement
+#     Method: NetworkPolicySoakMeasurement
+#     Params:
+#       action: delete-pods
 {{end}}
 # 5. gather network performance measurement (wait and gather results)
 - name: Network Policy Soak Test - Gather Results

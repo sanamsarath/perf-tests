@@ -213,6 +213,7 @@ func (m *NetworkPolicySoakMeasurement) deletePods() ([]measurement.Summary, erro
 
 func (m *NetworkPolicySoakMeasurement) restart() ([]measurement.Summary, error) {
 
+	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
 
 	// deploy the target pods
 	if err := m.deployTargetPods("restart"); err != nil {
@@ -517,8 +518,6 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 		}
 		clientWaitCancel() // cancel context immediately after waiting
 	}
-
-	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
 
 	m.testEndTime = time.Now().Add(m.testDuration)
 	return nil
