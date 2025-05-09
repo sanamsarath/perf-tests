@@ -69,7 +69,7 @@ steps:
       enableViolations: true
       queries:
       - name: max number of http requests total over time
-        query: avg_over_time(http_requests_total[%v:])
+        query: sum(increase(http_requests_total[%v:]))
   - Identifier: MaxHttpRequestsFail
     Method: GenericPrometheusQuery
     Params:

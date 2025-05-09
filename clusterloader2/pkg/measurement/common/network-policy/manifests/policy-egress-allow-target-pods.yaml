@@ -17,6 +17,10 @@ spec:
 {{if .OnlyTargetNamespace}}
         k8s:io.kubernetes.pod.namespace: {{.TargetNamespace}}
 {{end}}
+    toPorts:
+    - ports: 
+      - port: "{{.TargetPort}}"
+        protocol: TCP
 {{if .L7Enabled}}
     toPorts:
     - ports:

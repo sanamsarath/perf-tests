@@ -357,17 +357,7 @@ func (nps *networkPolicyEnforcementMeasurement) runPolicyCreationTest(depTemplat
 		klog.Warningf("Not all %d policy creation test client pods are running after %v", len(nps.targetNamespaces), timeout)
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	// Create load policies while allow policies are being created to take network
-	// policy churn into account.
-	go func() {
-		nps.createLoadPolicies(config)
-		wg.Done()
-	}()
-
 	nps.createAllowPoliciesForPolicyCreationLatency()
-	wg.Wait()
 
 	return nil
 }
