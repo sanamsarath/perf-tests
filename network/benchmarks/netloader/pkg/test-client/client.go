@@ -27,6 +27,7 @@ type TestClient struct {
 	interval           time.Duration
 	concurrentThreads  int
 	destPort           int
+	destPort2		   int
 	destPath           string
 	stopChan           chan os.Signal
 	HttpMetrics        *HttpMetrics
@@ -41,7 +42,9 @@ func NewTestClient(stopCh chan os.Signal) (*TestClient, error) {
 		httpClient: &http.Client{
 			Transport: &http2.Transport{
 				AllowHTTP: true,
+				IdleConnTimeout: 5 * time.Second,
 				DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+					//add timeout 
 					return net.Dial(network, addr)
 				},
 			},
@@ -58,6 +61,7 @@ func (c *TestClient) parse() error {
 	var interval int
 	var concurrentThreads int
 	var destPort int
+	var destPort2 int
 	var destPath string
 
 	flag.StringVar(&dest_labelSelector, "dest_labelSelector", "app=target", "destination label selector")
@@ -66,6 +70,7 @@ func (c *TestClient) parse() error {
 	flag.IntVar(&interval, "interval", 1, "interval between requests")
 	flag.IntVar(&concurrentThreads, "workers", 10, "number of concurrent threads")
 	flag.IntVar(&destPort, "destPort", 80, "destination port number")
+	flag.IntVar(&destPort2, "destPort2", 90, "destination port number")
 	flag.StringVar(&destPath, "destPath", "/", "destination path")
 
 	flag.Parse()
@@ -76,9 +81,10 @@ func (c *TestClient) parse() error {
 	c.interval = time.Duration(interval) * time.Second
 	c.concurrentThreads = concurrentThreads
 	c.destPort = destPort
+	c.destPort2 = destPort2
 	c.destPath = destPath
 
-	klog.Infof("dest_labelSelector: %s, namespace: %s, duration: %v, interval: %v, concurrentThreads: %d, destPort: %d, destPath: %s", c.dest_labelSelector, c.namespace, c.duration, c.interval, c.concurrentThreads, c.destPort, c.destPath)
+	klog.Infof("dest_labelSelector: %s, namespace: %s, duration: %v, interval: %v, concurrentThreads: %d, destPort: %d, , destPort2: %d, destPath: %s", c.dest_labelSelector, c.namespace, c.duration, c.interval, c.concurrentThreads, c.destPort, c.destPort2, c.destPath)
 	return nil
 }
 
@@ -94,6 +100,7 @@ func (c *TestClient) Run() {
 			klog.Fatalf("Failed to start metrics server: %v", err)
 		}
 	}()
+
 
 	// start the test
 	c.startTest()
@@ -173,39 +180,52 @@ func (c *TestClient) startTest() {
 // update worker signature to receive string
 func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, ipChan <-chan string) {
 	defer wg.Done()
-	destPort := strconv.Itoa(c.destPort)
+	destPorts := []string{strconv.Itoa(c.destPort), strconv.Itoa(c.destPort2)}
 	for {
 		select {
 		case <-ctx.Done():
 			klog.Info("Load duration expired, stopping worker")
 			return
 		case ip := <-ipChan:
-			// url
-			url := "http://" + ip + ":" + destPort + c.destPath
+			for _, dPort := range destPorts {
+				// url
+				url := "http://" + ip + ":" + dPort + c.destPath
 
-			// start time
-			start := time.Now()
+				// start time
+				start := time.Now()
 
-			// make the http request
-			resp, err := c.httpClient.Get(url)
-			if err != nil {
-				klog.Errorf("http request failed: %v", err)
-				// Inc total and fail counters
-				c.HttpMetrics.requestsTotal.WithLabelValues("total").Inc()
-				c.HttpMetrics.requestsFail.WithLabelValues("fail").Inc()
-				continue
+				// make the http request
+				resp, err := c.httpClient.Get(url)
+				if err != nil {
+					klog.Errorf("http request failed: %v", err)
+					if ctx.Err() != nil {
+						klog.Info("Context canceled, skipping counter increment")
+						continue
+					}
+					select {
+					case <-c.stopChan:
+						klog.Info("Stop signal received, skipping failure counter increment")
+						continue
+					default:
+						// No stop signal, proceed to increment failure counter
+					}
+					c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
+					c.HttpMetrics.requestsFail.WithLabelValues("fail", dPort).Inc()
+					continue
+				}
+
+				// record the latency - optional via env var
+				if os.Getenv("RECORD_LATENCY") == "true" {
+					latency := time.Since(start).Seconds()
+					c.HttpMetrics.latencies.WithLabelValues(ip).Observe(latency)
+				}
+			
+
+				// Inc total and success counters
+				c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
+				c.HttpMetrics.requestsSuccess.WithLabelValues("success", dPort).Inc()
+				resp.Body.Close()
 			}
-
-			// record the latency - optional via env var
-			if os.Getenv("RECORD_LATENCY") == "true" {
-				latency := time.Since(start).Seconds()
-				c.HttpMetrics.latencies.WithLabelValues(ip).Observe(latency)
-			}
-
-			// Inc total and success counters
-			c.HttpMetrics.requestsTotal.WithLabelValues("total").Inc()
-			c.HttpMetrics.requestsSuccess.WithLabelValues("success").Inc()
-			resp.Body.Close()
 		}
 	}
 }

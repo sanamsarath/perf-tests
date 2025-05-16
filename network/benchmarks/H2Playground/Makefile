@@ -1,4 +1,4 @@
-USERNAME ?= sanamsarath
+USERNAME ?= karanadive
 PROJECT ?= h2playground
 REGISTRY ?= acnpublic.azurecr.io
 IMG ?= $(USERNAME)/$(PROJECT)

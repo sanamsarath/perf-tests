@@ -254,6 +254,10 @@ func (f *Framework) CreateObject(namespace string, name string, obj *unstructure
 	return client.CreateObject(f.dynamicClients.GetClient(), namespace, name, obj, options...)
 }
 
+func (f *Framework) UpdateObject(namespace string, name string, obj *unstructured.Unstructured, options ...*client.APICallOptions) error {
+	return client.UpdateObject(f.dynamicClients.GetClient(), namespace, name, obj, options...)
+}
+
 // PatchObject updates object (using patch) with given name using given object description.
 func (f *Framework) PatchObject(namespace string, name string, obj *unstructured.Unstructured, _ ...*client.APICallOptions) error {
 	return client.PatchObject(f.dynamicClients.GetClient(), namespace, name, obj)
@@ -303,6 +307,46 @@ func (f *Framework) ApplyTemplatedManifests(fsys fs.FS, manifestGlob string, tem
 		}
 		for _, item := range objList {
 			if err := f.CreateObject(item.GetNamespace(), item.GetName(), &item, options...); err != nil {
+				return fmt.Errorf("error while applying (%s): %v", manifest, err)
+			}
+		}
+
+	}
+	return nil
+}
+
+func (f *Framework) UpdateTemplatedManifests(fsys fs.FS, manifestGlob string, templateMapping map[string]interface{}, options ...*client.APICallOptions) error {
+	// TODO(mm4tt): Consider using the out-of-the-box "kubectl create -f".
+	klog.Infof("Applying templates for %q", manifestGlob)
+
+	templateProvider := config.NewTemplateProvider(fsys)
+	manifests, err := fs.Glob(fsys, manifestGlob)
+	if err != nil {
+		return err
+	}
+	if manifests == nil {
+		klog.Warningf("There is no matching file for pattern %v.\n", manifestGlob)
+	}
+	for _, manifest := range manifests {
+		klog.V(1).Infof("Applying %s\n", manifest)
+		obj, err := templateProvider.TemplateToObject(manifest, templateMapping)
+		if err != nil {
+			if err == config.ErrorEmptyFile {
+				klog.Warningf("Skipping empty manifest %s", manifest)
+				continue
+			}
+			return fmt.Errorf("TemplateToObject error: %+v", err)
+		}
+		objList := []unstructured.Unstructured{*obj}
+		if obj.IsList() {
+			list, err := obj.ToList()
+			if err != nil {
+				return err
+			}
+			objList = list.Items
+		}
+		for _, item := range objList {
+			if err := f.UpdateObject(item.GetNamespace(), item.GetName(), &item, options...); err != nil {
 				return fmt.Errorf("error while applying (%s): %v", manifest, err)
 			}
 		}

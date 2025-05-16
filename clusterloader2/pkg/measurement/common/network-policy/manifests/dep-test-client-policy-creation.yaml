@@ -27,6 +27,10 @@ spec:
         operator: Equal
         value: {{.TestClientNodeSelectorValue}}
         effect: NoSchedule
+      - key: "slo"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
       containers:
       - name: net-policy-latency-client
         ports:

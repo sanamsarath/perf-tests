@@ -1,10 +1,16 @@
 {{$NUMBER_OF_SERVERS_PER_Group := DefaultParam .CL2_NUMBER_OF_SERVERS_PER_GROUP 2}}
 {{$NUMBER_OF_CLIENTS_PER_Group := DefaultParam .CL2_NUMBER_OF_CLIENTS_PER_GROUP 1}}
 {{$NUMBER_OF_GROUPS := DefaultParam .CL2_NUMBER_OF_GROUPS 2}}
-{{$TARGET_PORT := DefaultParam .CL2_TARGET_PORT 80}}
+{{$TARGET_PORT := DefaultParam .CL2_TARGET_PORT 8888}}
+{{$TARGET_PORT2 := DefaultParam .CL2_TARGET_PORT2 9090}}
 {{$WORKERS_PER_CLIENT := DefaultParam .CL2_WORKERS_PER_CLIENT 5}}
 {{$DURATION := DefaultParam .CL2_DURATION 600}}
+{{$repeats := DefaultParam .CL2_REPEATS 1}}
 {{$Network_Policy_Type := DefaultParam .CL2_NETWORK_POLICY_TYPE "k8s"}}
+{{$NET_POLICY_L7_ENABLED := DefaultParam .CL2_NET_POLICY_L7_ENABLED false}}
+{{$L3_L4_PORT := DefaultParam .CL2_L3_L4_PORT false}}
+{{$RESTART_DELETION_ENABLED := DefaultParam .CL2_RESTART_DELETION_ENABLED false}}
+{{$CLIENT_POD_MONITOR := DefaultParam .CL2_CLIENT_POD_MONITOR false}}
 {{$SOAK_TEST := DefaultParam .CL2_SOAK_TEST false}}
 namespace:
   number: {{$NUMBER_OF_GROUPS}}
@@ -13,15 +19,15 @@ namespace:
   deleteAutomanagedNamespaces: true
   enableExistingNamespaces: false
 steps:
-# 1. start cilium agent metrics
+# create gather 
+# 1. start cilium agent metrics & client metrics
 # 2. start cilium envoy metrics
 # 3. start resource usage metrics (cpu, memory usage of Envoy) 
 # 4. start network performance measurement (setup and run)
 # 5. gather network performance measurement (wait and gather results)
 # 6. gather resource usage metrics
 # 7. gather cilium envoy metrics
-# 8. gather cilium agent metrics
-
+# 8. gather cilium agent metrics & client metrics
 # 1. start cilium agent metrics
 - name: Cilium Agent Metrics
   measurements:
@@ -53,6 +59,45 @@ steps:
         query: quantile(0.90, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
       - name: Perc50
         query: quantile(0.5, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+  - Identifier: HttpRequestsTotal
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Total number of HTTP Requests Total
+      metricVersion: v1
+      unit: count
+      dimensions:
+      - port
+      enableViolations: true
+      queries:
+      - name: total number of http requests total over time
+        query: sum(sum_over_time(http_requests_total[%v:])) by (port)
+  - Identifier: TotalHttpRequestsFail
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Total number of HTTP Requests Fail
+      metricVersion: v1
+      unit: count
+      dimensions:
+      - port
+      enableViolations: true
+      queries:
+      - name: total number of http requests fail over time
+        query: sum(sum_over_time(http_requests_fail[%v:])) by (port)
+  - Identifier: TotalHttpRequestsSuccess
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Total number of HTTP Requests Success
+      metricVersion: v1
+      unit: count
+      dimensions:
+      - port
+      enableViolations: true
+      queries:
+      - name: total number of http requests success over time
+        query: sum(sum_over_time(http_requests_success[%v:])) by (port)
   - Identifier: CiliumAgentMaxCPUUsage
     Method: GenericPrometheusQuery
     Params:
@@ -125,6 +170,7 @@ steps:
         - name: envoy_memory_heap_size_max
           query: max(max_over_time(envoy_server_memory_heap_size[%v:])) / 1024 / 1024
 # 4. start network performance measurement (setup and run)
+{{range $i := Loop $repeats}}
 - name: Network Policy Soak Test - Start
   measurements:
   - Identifier: NetworkPolicySoakMeasurement
@@ -138,10 +184,35 @@ steps:
       targetReplicasPerNs: {{$NUMBER_OF_SERVERS_PER_Group}}
       clientReplicasPerDep: {{$NUMBER_OF_CLIENTS_PER_Group}}
       targetPort: {{$TARGET_PORT}}
+      targetPort2: {{$TARGET_PORT2}}
+      l7Enabled: {{$NET_POLICY_L7_ENABLED}}
+      l3l4port: {{$L3_L4_PORT}}
+      resourceGatheringEnabled: false
       targetPath: /
       testDuration: "{{$DURATION}}"
       workerPerClient: {{$WORKERS_PER_CLIENT}}
       npType: {{$Network_Policy_Type}}
+{{if $RESTART_DELETION_ENABLED}}
+- name: Network Policy Soak Test - RestartPods
+  measurements:
+  - Identifier: NetworkPolicySoakMeasurement
+    Method: NetworkPolicySoakMeasurement
+    Params:
+      action: restart
+- name: Network Policy Soak Test - Delete Pods
+  measurements:
+  - Identifier: NetworkPolicySoakMeasurement
+    Method: NetworkPolicySoakMeasurement
+    Params:
+      action: delete-pods
+- name: Network Policy Soak Test - Delete CNPS
+  measurements:
+  - Identifier: NetworkPolicySoakMeasurement
+    Method: NetworkPolicySoakMeasurement
+    Params:
+      action: delete-ccnps-cnps
+{{end}}
+{{end}}
 # 5. gather network performance measurement (wait and gather results)
 - name: Network Policy Soak Test - Gather Results
   measurements:
@@ -185,8 +256,24 @@ steps:
       Params:
         action: gather
         enableViolations: true
-# IF SOAK_TEST, GATHER ENVOY MEMORY METRICS 1 HOUR AFTER THE TEST
-# TO VERIFY MEMORY LEAKS
+- name: Client Metrics
+  measurements: 
+    - Identifier: HttpRequestsTotal
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: TotalHttpRequestsFail
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: TotalHttpRequestsSuccess
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+# IF SOAK_TEST, GATHER ENVOY MEMORY METRICS 1 HOUR AFTER THE TEST TO VERIFY MEMORY LEAKS
 {{if $SOAK_TEST }}
 - name: Starting Soak metrics collection
   measurements:

@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
+    group: "service-discovery"
     {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
     # this is dynamically generated and used for group deployment and deletion tracking
     {{ (StructuralData .TargetDeploymentLabelKey)}}: {{.TargetDeploymentLabelValue}}
@@ -9,6 +10,11 @@ metadata:
   namespace: {{.TargetNamespace}}
 spec:
   replicas: {{.Replicas}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 20%
+      maxSurge: 20%
   selector:
     matchLabels:
       {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
@@ -16,20 +22,27 @@ spec:
   template:
     metadata:
       labels:
+        phase: {{.DeploymentLabel}}
+        group: "service-discovery"
         {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
         {{ (StructuralData .TargetDeploymentLabelKey)}}: {{.TargetDeploymentLabelValue}}
     spec:
       nodeSelector:
         slo: "true"
       containers:
-      - image: acnpublic.azurecr.io/sanamsarath/h2playground:0.3
+      - image: acnpublic.azurecr.io/karanadive/h2playground:0.3 
         name: nginx
-        ports:
-        - containerPort: {{.TargetPort}}
+        imagePullPolicy: Always
+        args:
+          - "--plain={{.TargetPort}}"
+          - "--plain2={{.TargetPort2}}"
         resources:
           requests:
             cpu: "15m"
             memory: "30Mi"
+        ports:
+        - containerPort: {{.TargetPort}}
+        - containerPort: {{.TargetPort2}}
       tolerations:
       - key: "node.kubernetes.io/not-ready"
         operator: "Exists"
