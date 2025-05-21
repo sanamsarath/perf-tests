@@ -1,4 +1,4 @@
-package networkpolicysoak
+package connectivitysoak
 
 import (
 	"context"
@@ -26,26 +26,28 @@ import (
 
 const (
 	// file paths
-	networkPolicySoakMeasurementName = "NetworkPolicySoakMeasurement"
-	serviceAccountFilePath           = "manifests/serviceaccount.yaml"
-	clusterRoleFilePath              = "manifests/clusterrole.yaml"
-	clusterRoleBindingFilePath       = "manifests/clusterrolebinding.yaml"
-	netPolFilePath                   = "manifests/network_policy.yaml"
-	clientFilePath                   = "manifests/client_deploy.yaml"
-	targetFilePath                   = "manifests/target_deploy.yaml"
-	APIserverFilePath                = "manifests/allow_apiserver_np.yaml"
+	connectivitySoakMeasurementName = "ConnectivitySoakMeasurement"
+	serviceAccountFilePath          = "manifests/serviceaccount.yaml"
+	clusterRoleFilePath             = "manifests/clusterrole.yaml"
+	clusterRoleBindingFilePath      = "manifests/clusterrolebinding.yaml"
+	clientFilePath                  = "manifests/client_deploy.yaml"
+	targetFilePath                  = "manifests/target_deploy.yaml"
+
+	// network policies
+	netPolFilePath    = "network-policy-soak/manifests/network_policy.yaml"
+	APIserverFilePath = "network-policy-soak/manifests/allow_apiserver_np.yaml"
 
 	// variables
-	clientNamespace = "np-soak-client"
-	clientName      = "np-soak-client" // all the k8s resources will be prefixed with this name
-	targetName      = "np-soak-target" // all the deployments in target namespaces will be named with np-soak-target
+	clientNamespace = "soak-client"
+	clientName      = "soak-client" // all the k8s resources will be prefixed with this name
+	targetName      = "soak-target" // all the deployments in target namespaces will be named with soak-target
 	apiserverNPName = "allow-egress-apiserver"
 )
 
 //go:embed manifests
 var manifestsFS embed.FS
 
-type NetworkPolicySoakMeasurement struct {
+type ConnectivitySoakMeasurement struct {
 	isRunning            bool
 	testDuration         time.Duration
 	k8sClient            kubernetes.Interface
@@ -58,28 +60,31 @@ type NetworkPolicySoakMeasurement struct {
 	targetReplicasPerNs  int
 	clientReplicasPerDep int
 	targetPort           int
-	targetPort2			 int
+	targetPort2          int
 	targetPath           string
 	testEndTime          time.Time
 	workerPerClient      int
-	l7Enabled 			 bool
-	l3l4port		     bool
-	isRestart 			 bool
+	enableNetworkPolicy  bool
+	l7Enabled            bool
+	l3l4port             bool
+	isRestart            bool
 	npType               string
 	// gatherers
 	gatherers                *gatherers.ContainerResourceGatherer
 	resourceGatheringEnabled bool
 }
 
-func createNetworkPolicySoakMeasurement() measurement.Measurement {
-	return &NetworkPolicySoakMeasurement{}
+func createConnectivitySoakMeasurement() measurement.Measurement {
+	return &ConnectivitySoakMeasurement{
+		enableNetworkPolicy: true, // Default to true for backward compatibility
+	}
 }
 
 func init() {
-	measurement.Register(networkPolicySoakMeasurementName, createNetworkPolicySoakMeasurement)
+	measurement.Register(connectivitySoakMeasurementName, createConnectivitySoakMeasurement)
 }
 
-func (m *NetworkPolicySoakMeasurement) Execute(config *measurement.Config) ([]measurement.Summary, error) {
+func (m *ConnectivitySoakMeasurement) Execute(config *measurement.Config) ([]measurement.Summary, error) {
 	action, err := util.GetString(config.Params, "action")
 	if err != nil {
 		return nil, err
@@ -92,16 +97,18 @@ func (m *NetworkPolicySoakMeasurement) Execute(config *measurement.Config) ([]me
 		return m.gather()
 	case "restart":
 		return m.restart()
-	case "delete-ccnps-cnps":
-		return m.deleteNetworkPolicies()
-	case "delete-pods":
-		return m.deletePods()
+	case "stop":
+		return m.stop()
+	// case "delete-ccnps-cnps":
+	// 	return m.deleteNetworkPolicies()
+	// case "delete-pods":
+	// 	return m.deletePods()
 	default:
 		return nil, fmt.Errorf("unknown action: %s", action)
 	}
 }
 
-func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]measurement.Summary, error) {
+func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measurement.Summary, error) {
 	if m.isRunning && !m.isRestart {
 		return nil, fmt.Errorf("phase: start, %s: measurement already running", m.String())
 	}
@@ -111,30 +118,35 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 	}
 
 	// do this only in the start phase
-	if (!m.isRestart){
+	if !m.isRestart {
 		// create the client namespace
 		if err := client.CreateNamespace(m.k8sClient, clientNamespace); err != nil {
 			return nil, fmt.Errorf("phase: start, %s: failed to create namespace %s: %v", m.String(), clientNamespace, err)
 		}
-	
+
 		// deploy the RBAC resources
 		if err := m.deployRBACResources(); err != nil {
 			return nil, err
 		}
 
-		//deploy target pods 
+		//deploy target pods
 		if err := m.deployTargetPods("start"); err != nil {
 			return nil, err
 		}
-		// deploy the network policy to allow traffic from client to API server only in start phase
-		if err := m.deployAPIServerNetworkPolicy(); err != nil {
-			return nil, err
+
+		if m.enableNetworkPolicy {
+			// deploy the network policy to allow traffic from client to API server only in start phase
+			if err := m.deployAPIServerNetworkPolicy(); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	// deploy the network policy to allow traffic from client to target pods
-	if err := m.deployNetworkPolicy(); err != nil {
-		return nil, err
+	if m.enableNetworkPolicy {
+		// deploy the network policy to allow traffic from client to target pods
+		if err := m.deployNetworkPolicy(); err != nil {
+			return nil, err
+		}
 	}
 
 	// deploy the client pods
@@ -154,148 +166,7 @@ func (m *NetworkPolicySoakMeasurement) start(config *measurement.Config) ([]meas
 	return nil, nil
 }
 
-func (nps *NetworkPolicySoakMeasurement) deleteNetworkPolicies() ([]measurement.Summary, error) {
-
-	dynamicClient := nps.framework.GetDynamicClients().GetClient()
-
-	switch nps.npType {
-	case "k8s":
-		return nil, nil
-	case "ccnp":
-		// Define the GVR for CiliumClusterwideNetworkPolicy
-		ccnpGVR := schema.GroupVersionResource{
-			Group:    "cilium.io",
-			Version:  "v2",
-			Resource: "ciliumclusterwidenetworkpolicies",
-		}
-
-		if err := dynamicClient.Resource(ccnpGVR).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
-			klog.Errorf("failed to delete CiliumClusterwideNetworkPolicy, error: %v", err)
-		}
-
-        // Wait for CCNPs to be fully deleted
-        klog.Info("Waiting for CiliumClusterwideNetworkPolicies to be fully deleted...")
-        if err := nps.waitForNetworkPoliciesDeleted(dynamicClient, ccnpGVR, ""); err != nil {
-            klog.Errorf("failed to wait for CiliumClusterwideNetworkPolicies to be deleted: %v", err)
-            return nil, err
-        }
-	
-	case "cnp":
-		// Define the GVR for CiliumNetworkPolicy
-		cnpGVR := schema.GroupVersionResource{
-			Group:    "cilium.io",
-			Version:  "v2",
-			Resource: "ciliumnetworkpolicies",
-		}
-
-		if err := dynamicClient.Resource(cnpGVR).Namespace(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
-			klog.Errorf("failed to delete CiliumNetworkPolicy in ns:%s, error: %v", clientNamespace, err)
-		}
-
-        // Wait for CNPs to be fully deleted
-        klog.Info("Waiting for CiliumNetworkPolicies to be fully deleted...")
-        if err := nps.waitForNetworkPoliciesDeleted(dynamicClient, cnpGVR, clientNamespace); err != nil {
-            klog.Errorf("failed to wait for CiliumNetworkPolicies to be deleted: %v", err)
-            return nil, err
-        }
-	}
-	return nil, nil
-}
-
-func (nps *NetworkPolicySoakMeasurement) waitForNetworkPoliciesDeleted(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace string) error {
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) // Adjust timeout as needed
-    defer cancel()
-
-    for {
-        select {
-        case <-ctx.Done():
-            return fmt.Errorf("timeout waiting for network policies to be deleted")
-        default:
-            var list *unstructured.UnstructuredList
-            var err error
-
-            if namespace == "" {
-                list, err = dynamicClient.Resource(gvr).List(context.TODO(), metav1.ListOptions{})
-            } else {
-                list, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.TODO(), metav1.ListOptions{})
-            }
-
-            if err != nil {
-                return fmt.Errorf("failed to list network policies: %v", err)
-            }
-
-            if len(list.Items) == 0 {
-                klog.Infof("All network policies of type %s have been deleted", gvr.Resource)
-                return nil
-            }
-
-            klog.Infof("Waiting for %d network policies of type %s to be deleted...", len(list.Items), gvr.Resource)
-            time.Sleep(1 * time.Second) // Polling interval
-        }
-    }
-}
-
-func (m *NetworkPolicySoakMeasurement) deletePods() ([]measurement.Summary, error) {
-	
-	// delete client pods
-	if err := m.k8sClient.AppsV1().Deployments(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
-		klog.Errorf("phase: delete-pods, %s: failed to delete client deployments: %v", m.String(), err)
-	}
-
-    // Wait for client pods to be fully deleted
-    klog.Info("Waiting for client pods to be fully deleted...")
-    err := m.waitForPodsDeleted(clientNamespace, m.clientLabelKey, m.clientLabelVal)
-    if err != nil {
-        klog.Errorf("phase: delete-pods, %s: failed to wait for client pods to be deleted: %v", m.String(), err)
-        return nil, err
-    }
-	
-	return nil, nil
-}
-
-func (m *NetworkPolicySoakMeasurement) waitForPodsDeleted(namespace, labelKey, labelValue string) error {
-    labelSelector := fmt.Sprintf("%s=%s", labelKey, labelValue)
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute) // Adjust timeout as needed
-    defer cancel()
-
-    for {
-        select {
-        case <-ctx.Done():
-            return fmt.Errorf("timeout waiting for pods in namespace %s with label %s=%s to be deleted", namespace, labelKey, labelValue)
-        default:
-            podList, err := m.k8sClient.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
-            if err != nil {
-                return fmt.Errorf("failed to list pods in namespace %s with label %s=%s: %v", namespace, labelKey, labelValue, err)
-            }
-
-            if len(podList.Items) == 0 {
-                klog.Infof("All pods in namespace %s with label %s=%s have been deleted", namespace, labelKey, labelValue)
-                return nil
-            }
-
-            klog.Infof("Waiting for %d pods in namespace %s with label %s=%s to be deleted...", len(podList.Items), namespace, labelKey, labelValue)
-            time.Sleep(1 * time.Second) // Polling interval
-        }
-    }
-}
-
-func (m *NetworkPolicySoakMeasurement) restart() ([]measurement.Summary, error) {
-
-	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
-
-	// deploy the client pods
-	if err := m.deployClientPods("restart"); err != nil {
-		return nil, err
-	}
-
-	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
-
-	return nil, nil
-
-
-}
-
-func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config, phase string) error {
+func (m *ConnectivitySoakMeasurement) initialize(config *measurement.Config, phase string) error {
 	// initialization
 	m.k8sClient = config.ClusterFramework.GetClientSets().GetClient()
 	m.framework = config.ClusterFramework
@@ -374,7 +245,7 @@ func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config, ph
 		return fmt.Errorf("phase: start, %s: failed to get worker per client: %v", m.String(), err)
 	}
 
-	if m.npType, err = util.GetStringOrDefault(config.Params, "npType", "k8s"); err != nil {
+	if m.npType, err = util.GetStringOrDefault(config.Params, "npType", "none"); err != nil {
 		return fmt.Errorf("phase: start, %s: failed to get network policy type: %v", m.String(), err)
 	}
 
@@ -385,7 +256,7 @@ func (m *NetworkPolicySoakMeasurement) initialize(config *measurement.Config, ph
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) deployRBACResources() error {
+func (m *ConnectivitySoakMeasurement) deployRBACResources() error {
 	templateMap := map[string]interface{}{
 		"Name":      clientName,
 		"Namespace": clientNamespace,
@@ -409,7 +280,7 @@ func (m *NetworkPolicySoakMeasurement) deployRBACResources() error {
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) deployTargetPods(phase string) error {
+func (m *ConnectivitySoakMeasurement) deployTargetPods(phase string) error {
 	// Validate that the replica count is positive
 	if m.targetReplicasPerNs <= 0 {
 		return fmt.Errorf("phase: %s, %s: invalid target replicas per namespace: %d", phase, m.String(), m.targetReplicasPerNs)
@@ -428,7 +299,7 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods(phase string) error {
 			"TargetLabelValue": m.targetLabelVal,
 			"Replicas":         m.targetReplicasPerNs,
 			"TargetPort":       m.targetPort,
-			"TargetPort2": 		m.targetPort2,
+			"TargetPort2":      m.targetPort2,
 			"DeploymentLabel":  phase,
 			// generate unique key and value for each deployment batch
 			// this will be used to wait for the pods to be ready by matching the label selector
@@ -463,7 +334,11 @@ func (m *NetworkPolicySoakMeasurement) deployTargetPods(phase string) error {
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) deployAPIServerNetworkPolicy() error {
+func (m *ConnectivitySoakMeasurement) deployAPIServerNetworkPolicy() error {
+
+	if m.enableNetworkPolicy == false {
+		return nil
+	}
 
 	if policy, err := m.k8sClient.NetworkingV1().NetworkPolicies(clientNamespace).Get(context.TODO(), apiserverNPName, metav1.GetOptions{}); err == nil && policy != nil {
 		// network policy already exists
@@ -496,7 +371,11 @@ func (m *NetworkPolicySoakMeasurement) deployAPIServerNetworkPolicy() error {
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
+func (m *ConnectivitySoakMeasurement) deployNetworkPolicy() error {
+
+	if m.enableNetworkPolicy == false {
+		return nil
+	}
 
 	klog.Infof("l7Enabled: %v", m.l7Enabled)
 
@@ -507,8 +386,8 @@ func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
 		"TargetLabelKey":     m.targetLabelKey,
 		"TargetLabelValue":   m.targetLabelVal,
 		"TargetPort":         strconv.Itoa(m.targetPort),
-		"L7Enabled":		  m.l7Enabled,
-		"L3L4Port":		      m.l3l4port,
+		"L7Enabled":          m.l7Enabled,
+		"L3L4Port":           m.l3l4port,
 		"TargetPath":         m.targetPath,
 		"NetworkPolicy_Type": m.npType,
 	}
@@ -523,7 +402,7 @@ func (m *NetworkPolicySoakMeasurement) deployNetworkPolicy() error {
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
+func (m *ConnectivitySoakMeasurement) deployClientPods(phase string) error {
 	// Usually server/target pods replicas are not large, so they should be up and running in a short time
 	klog.Infof("Deploying client pods")
 
@@ -545,7 +424,7 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 			"TargetLabelValue": m.targetLabelVal,
 			"TargetPort":       m.targetPort,
 			"TargetPort2":      m.targetPort2,
-			"DeploymentLabel":	phase,
+			"DeploymentLabel":  phase,
 			"TargetPath":       m.targetPath,
 			"Duration":         duration,
 			"Replicas":         m.clientReplicasPerDep,
@@ -558,7 +437,7 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 		for _, ns := range m.targetNamespaces[i:end] {
 			batchTemplateMap["TargetNamespace"] = ns
 			batchTemplateMap["UniqueName"] = ns // use the target namespace name as the deployment name
-			if phase == "start" { 
+			if phase == "start" {
 				if err := m.framework.ApplyTemplatedManifests(manifestsFS, clientFilePath, batchTemplateMap); err != nil {
 					return fmt.Errorf("phase: %s, %s NS: %s, failed to apply client deployment manifest: %v", phase, m.String(), ns, err)
 				}
@@ -568,7 +447,6 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 				}
 			}
 		}
-
 
 		// Wait for the current batch client pods to be ready.
 		labelSelector := fmt.Sprintf("%s=%s", batchTemplateMap["ClientDeploymentLabelKey"], batchTemplateMap["ClientDeploymentLabelValue"])
@@ -586,7 +464,7 @@ func (m *NetworkPolicySoakMeasurement) deployClientPods(phase string) error {
 }
 
 // Wait for the deployment pods be to be ready
-func (m *NetworkPolicySoakMeasurement) waitForDeploymentPodsReady(ctx context.Context, desiredPodCount int, labelSelector string) error {
+func (m *ConnectivitySoakMeasurement) waitForDeploymentPodsReady(ctx context.Context, desiredPodCount int, labelSelector string) error {
 	// get the selector for the pods
 	selector := util.NewObjectSelector()
 	if labelSelector == "" {
@@ -613,7 +491,7 @@ func (m *NetworkPolicySoakMeasurement) waitForDeploymentPodsReady(ctx context.Co
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) gather() ([]measurement.Summary, error) {
+func (m *ConnectivitySoakMeasurement) gather() ([]measurement.Summary, error) {
 	if !m.isRunning {
 		return nil, fmt.Errorf("phase: gather, %s: measurement not running", m.String())
 	}
@@ -649,11 +527,11 @@ func (m *NetworkPolicySoakMeasurement) gather() ([]measurement.Summary, error) {
 		return nil, fmt.Errorf("phase: gather, %s: failed to pretty print resource usage summary: %v", m.String(), err)
 	}
 
-	resourceSummary := measurement.CreateSummary(networkPolicySoakMeasurementName, "json", content)
+	resourceSummary := measurement.CreateSummary(connectivitySoakMeasurementName, "json", content)
 	return []measurement.Summary{resourceSummary}, nil
 }
 
-func (m *NetworkPolicySoakMeasurement) envoyResourceGather() error {
+func (m *ConnectivitySoakMeasurement) envoyResourceGather() error {
 	if m.gatherers != nil {
 		return fmt.Errorf("phase: gather, %s: resource gatherer already initialized, not expected", m.String())
 	}
@@ -693,7 +571,154 @@ func (m *NetworkPolicySoakMeasurement) envoyResourceGather() error {
 	return nil
 }
 
-func (m *NetworkPolicySoakMeasurement) Dispose() {
+func (nps *ConnectivitySoakMeasurement) deleteNetworkPolicies() ([]measurement.Summary, error) {
+
+	if nps.enableNetworkPolicy == false {
+		return nil, nil
+	}
+
+	dynamicClient := nps.framework.GetDynamicClients().GetClient()
+
+	switch nps.npType {
+	case "k8s", "none":
+		return nil, nil
+	case "ccnp":
+		// Define the GVR for CiliumClusterwideNetworkPolicy
+		ccnpGVR := schema.GroupVersionResource{
+			Group:    "cilium.io",
+			Version:  "v2",
+			Resource: "ciliumclusterwidenetworkpolicies",
+		}
+
+		if err := dynamicClient.Resource(ccnpGVR).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+			klog.Errorf("failed to delete CiliumClusterwideNetworkPolicy, error: %v", err)
+		}
+
+		// Wait for CCNPs to be fully deleted
+		klog.Info("Waiting for CiliumClusterwideNetworkPolicies to be fully deleted...")
+		if err := nps.waitForNetworkPoliciesDeleted(dynamicClient, ccnpGVR, ""); err != nil {
+			klog.Errorf("failed to wait for CiliumClusterwideNetworkPolicies to be deleted: %v", err)
+			return nil, err
+		}
+
+	case "cnp":
+		// Define the GVR for CiliumNetworkPolicy
+		cnpGVR := schema.GroupVersionResource{
+			Group:    "cilium.io",
+			Version:  "v2",
+			Resource: "ciliumnetworkpolicies",
+		}
+
+		if err := dynamicClient.Resource(cnpGVR).Namespace(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+			klog.Errorf("failed to delete CiliumNetworkPolicy in ns:%s, error: %v", clientNamespace, err)
+		}
+
+		// Wait for CNPs to be fully deleted
+		klog.Info("Waiting for CiliumNetworkPolicies to be fully deleted...")
+		if err := nps.waitForNetworkPoliciesDeleted(dynamicClient, cnpGVR, clientNamespace); err != nil {
+			klog.Errorf("failed to wait for CiliumNetworkPolicies to be deleted: %v", err)
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+func (nps *ConnectivitySoakMeasurement) waitForNetworkPoliciesDeleted(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace string) error {
+	if nps.enableNetworkPolicy == false {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) // Adjust timeout as needed
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for network policies to be deleted")
+		default:
+			var list *unstructured.UnstructuredList
+			var err error
+
+			if namespace == "" {
+				list, err = dynamicClient.Resource(gvr).List(context.TODO(), metav1.ListOptions{})
+			} else {
+				list, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.TODO(), metav1.ListOptions{})
+			}
+
+			if err != nil {
+				return fmt.Errorf("failed to list network policies: %v", err)
+			}
+
+			if len(list.Items) == 0 {
+				klog.Infof("All network policies of type %s have been deleted", gvr.Resource)
+				return nil
+			}
+
+			klog.Infof("Waiting for %d network policies of type %s to be deleted...", len(list.Items), gvr.Resource)
+			time.Sleep(1 * time.Second) // Polling interval
+		}
+	}
+}
+
+func (m *ConnectivitySoakMeasurement) deletePods() ([]measurement.Summary, error) {
+
+	// delete client pods
+	if err := m.k8sClient.AppsV1().Deployments(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+		klog.Errorf("phase: delete-pods, %s: failed to delete client deployments: %v", m.String(), err)
+	}
+
+	// Wait for client pods to be fully deleted
+	klog.Info("Waiting for client pods to be fully deleted...")
+	err := m.waitForPodsDeleted(clientNamespace, m.clientLabelKey, m.clientLabelVal)
+	if err != nil {
+		klog.Errorf("phase: delete-pods, %s: failed to wait for client pods to be deleted: %v", m.String(), err)
+		return nil, err
+	}
+
+	return nil, nil
+}
+
+func (m *ConnectivitySoakMeasurement) waitForPodsDeleted(namespace, labelKey, labelValue string) error {
+	labelSelector := fmt.Sprintf("%s=%s", labelKey, labelValue)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute) // Adjust timeout as needed
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for pods in namespace %s with label %s=%s to be deleted", namespace, labelKey, labelValue)
+		default:
+			podList, err := m.k8sClient.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+			if err != nil {
+				return fmt.Errorf("failed to list pods in namespace %s with label %s=%s: %v", namespace, labelKey, labelValue, err)
+			}
+
+			if len(podList.Items) == 0 {
+				klog.Infof("All pods in namespace %s with label %s=%s have been deleted", namespace, labelKey, labelValue)
+				return nil
+			}
+
+			klog.Infof("Waiting for %d pods in namespace %s with label %s=%s to be deleted...", len(podList.Items), namespace, labelKey, labelValue)
+			time.Sleep(1 * time.Second) // Polling interval
+		}
+	}
+}
+
+func (m *ConnectivitySoakMeasurement) restart() ([]measurement.Summary, error) {
+
+	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
+
+	// deploy the client pods
+	if err := m.deployClientPods("restart"); err != nil {
+		return nil, err
+	}
+
+	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
+
+	return nil, nil
+
+}
+
+func (m *ConnectivitySoakMeasurement) Dispose() {
 	// delete RBAC resources
 	if err := m.k8sClient.RbacV1().ClusterRoleBindings().Delete(context.TODO(), fmt.Sprintf("%s-crb", clientName), metav1.DeleteOptions{}); err != nil {
 		klog.Errorf("phase: gather, %s: failed to delete cluster role binding: %v", m.String(), err)
@@ -707,8 +732,10 @@ func (m *NetworkPolicySoakMeasurement) Dispose() {
 		klog.Errorf("phase: gather, %s: failed to delete service account: %v", m.String(), err)
 	}
 
-	//delete cnps & or ccnps
-	m.deleteNetworkPolicies()
+	if m.enableNetworkPolicy {
+		//delete cnps & or ccnps
+		m.deleteNetworkPolicies()
+	}
 
 	// delete client pods
 	if err := m.k8sClient.AppsV1().Deployments(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
@@ -737,6 +764,6 @@ func (m *NetworkPolicySoakMeasurement) Dispose() {
 	}
 }
 
-func (m *NetworkPolicySoakMeasurement) String() string {
-	return networkPolicySoakMeasurementName
+func (m *ConnectivitySoakMeasurement) String() string {
+	return connectivitySoakMeasurementName
 }
