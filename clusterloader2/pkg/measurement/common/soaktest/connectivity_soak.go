@@ -1,4 +1,4 @@
-package connectivitysoak
+package soaktest
 
 import (
 	"context"
@@ -75,9 +75,7 @@ type ConnectivitySoakMeasurement struct {
 }
 
 func createConnectivitySoakMeasurement() measurement.Measurement {
-	return &ConnectivitySoakMeasurement{
-		enableNetworkPolicy: true, // Default to true for backward compatibility
-	}
+	return &ConnectivitySoakMeasurement{}
 }
 
 func init() {
@@ -97,12 +95,10 @@ func (m *ConnectivitySoakMeasurement) Execute(config *measurement.Config) ([]mea
 		return m.gather()
 	case "restart":
 		return m.restart()
-	case "stop":
-		return m.stop()
-	// case "delete-ccnps-cnps":
-	// 	return m.deleteNetworkPolicies()
-	// case "delete-pods":
-	// 	return m.deletePods()
+	case "delete-ccnps-cnps":
+		return m.deleteNetworkPolicies()
+	case "delete-pods":
+		return m.deletePods()
 	default:
 		return nil, fmt.Errorf("unknown action: %s", action)
 	}
@@ -336,7 +332,7 @@ func (m *ConnectivitySoakMeasurement) deployTargetPods(phase string) error {
 
 func (m *ConnectivitySoakMeasurement) deployAPIServerNetworkPolicy() error {
 
-	if m.enableNetworkPolicy == false {
+	if !m.enableNetworkPolicy {
 		return nil
 	}
 
@@ -373,7 +369,7 @@ func (m *ConnectivitySoakMeasurement) deployAPIServerNetworkPolicy() error {
 
 func (m *ConnectivitySoakMeasurement) deployNetworkPolicy() error {
 
-	if m.enableNetworkPolicy == false {
+	if !m.enableNetworkPolicy {
 		return nil
 	}
 
@@ -573,7 +569,7 @@ func (m *ConnectivitySoakMeasurement) envoyResourceGather() error {
 
 func (nps *ConnectivitySoakMeasurement) deleteNetworkPolicies() ([]measurement.Summary, error) {
 
-	if nps.enableNetworkPolicy == false {
+	if !nps.enableNetworkPolicy {
 		return nil, nil
 	}
 
@@ -624,7 +620,7 @@ func (nps *ConnectivitySoakMeasurement) deleteNetworkPolicies() ([]measurement.S
 }
 
 func (nps *ConnectivitySoakMeasurement) waitForNetworkPoliciesDeleted(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace string) error {
-	if nps.enableNetworkPolicy == false {
+	if !nps.enableNetworkPolicy {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) // Adjust timeout as needed

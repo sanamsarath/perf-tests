@@ -16,3 +16,18 @@
 
 # Test code path - perf-tests/clusterloader2/pkg/measurement/common/network-policy/network-policy-soak/manifests
 # yaml files for test objects are defined - perf-tests/clusterloader2/pkg/measurement/common/network-policy/network-policy-soak/manifests
+
+
+
+
+
+./clusterloader --provider=aks --kubeconfig=/home/itiagrawal/.kube/config \
+ --testconfig=/home/itiagrawal/Projects/Cilium/soak-test-perf-test/clusterloader2/testing/soak-test/connectivity_soak_config.yaml --v=5 \
+ --enable-prometheus-server=True \
+ --prometheus-storage-class-provisioner=disk.csi.azure.com \
+ --prometheus-pvc-storage-class=default \
+ --report-dir=/tmp/load-test/network-policy/http-soak1 \
+ --testoverrides=/home/itiagrawal/Projects/Cilium/soak-test-perf-test/clusterloader2/testing/soak-test/scale-overrides.yaml \
+  2>&1 | tee /tmp/load-test/network-policy/http-soak1/logs.txt
+
+

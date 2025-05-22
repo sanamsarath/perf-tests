@@ -193,20 +193,20 @@ steps:
       testDuration: "{{$DURATION}}"
       workerPerClient: {{$WORKERS_PER_CLIENT}}
       npType: {{$Network_Policy_Type}}
-{{if $RESTART_DELETION_ENABLED}}
-- name: Connectivity Soak Test - RestartPods
-  measurements:
-  - Identifier: ConnectiviySoakMeasurement
-    Method: ConnectivitySoakMeasurement
-    Params:
-      action: restart
-- name: Connectivity Soak Test - Delete Pods
-  measurements:
-  - Identifier: ConnectivitySoakMeasurement
-    Method: ConnectivitySoakMeasurement
-    Params:
-      action: delete-pods
-{{end}}
+# {{if $RESTART_DELETION_ENABLED}}
+# - name: Connectivity Soak Test - RestartPods
+#   measurements:
+#   - Identifier: ConnectiviySoakMeasurement
+#     Method: ConnectivitySoakMeasurement
+#     Params:
+#       action: restart
+# - name: Connectivity Soak Test - Delete Pods
+#   measurements:
+#   - Identifier: ConnectivitySoakMeasurement
+#     Method: ConnectivitySoakMeasurement
+#     Params:
+#       action: delete-pods
+# {{end}}
 {{end}}
 # 5. gather network performance measurement (wait and gather results)
 - name: Connectivityy Soak Test - Gather Results
