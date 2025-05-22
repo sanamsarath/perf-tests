@@ -49,9 +49,9 @@ import (
 	_ "k8s.io/perf-tests/clusterloader2/pkg/measurement/common/dns"
 	_ "k8s.io/perf-tests/clusterloader2/pkg/measurement/common/network"
 	_ "k8s.io/perf-tests/clusterloader2/pkg/measurement/common/network-policy"
-	_ "k8s.io/perf-tests/clusterloader2/pkg/measurement/common/network-policy/network-policy-soak"
 	_ "k8s.io/perf-tests/clusterloader2/pkg/measurement/common/probes"
 	_ "k8s.io/perf-tests/clusterloader2/pkg/measurement/common/slos"
+	_ "k8s.io/perf-tests/clusterloader2/pkg/measurement/common/soaktest"
 )
 
 const (

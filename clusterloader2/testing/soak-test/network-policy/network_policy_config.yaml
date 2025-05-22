@@ -185,6 +185,7 @@ steps:
       clientReplicasPerDep: {{$NUMBER_OF_CLIENTS_PER_Group}}
       targetPort: {{$TARGET_PORT}}
       targetPort2: {{$TARGET_PORT2}}
+      enableNetworkPolicy: true
       l7Enabled: {{$NET_POLICY_L7_ENABLED}}
       l3l4port: {{$L3_L4_PORT}}
       resourceGatheringEnabled: false

@@ -20,6 +20,6 @@ spec:
       app: client
   namespaceSelector:
     matchNames:
-      - np-soak-client
+      - soak-client
       
 {{end}}
