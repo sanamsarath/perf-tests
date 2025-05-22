@@ -19,15 +19,15 @@
 
 
 
-
+example command to run: 
 
 ./clusterloader --provider=aks --kubeconfig=/home/itiagrawal/.kube/config \
  --testconfig=/home/itiagrawal/Projects/Cilium/soak-test-perf-test/clusterloader2/testing/soak-test/connectivity_soak_config.yaml --v=5 \
  --enable-prometheus-server=True \
  --prometheus-storage-class-provisioner=disk.csi.azure.com \
  --prometheus-pvc-storage-class=default \
- --report-dir=/tmp/load-test/network-policy/http-soak1 \
+ --report-dir=/tmp/load-test/soak-test/http-soak1 \
  --testoverrides=/home/itiagrawal/Projects/Cilium/soak-test-perf-test/clusterloader2/testing/soak-test/scale-overrides.yaml \
-  2>&1 | tee /tmp/load-test/network-policy/http-soak1/logs.txt
+  2>&1 | tee /tmp/load-test/soak-test/http-soak1/logs.txt
 
 
