@@ -92,6 +92,9 @@ func (c *TestClient) Run() {
 	// parse command line arguments
 	_ = c.parse()
 
+	klog.Info("Sleeping 30 seconds")
+	time.Sleep(30 * time.Second) // wait for cilium agent reconcillation of policies
+	
 	// start metrics server
 	go func() {
 		klog.Info("Starting metrics server")

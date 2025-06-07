@@ -4,6 +4,7 @@ metadata:
   name: {{.Name}}
   namespace: {{.Namespace}}
   labels:
+    group: "service-discovery"
     test: {{.TestClientLabel}}
     type: {{.TypeLabelValue}}
 spec:
@@ -14,6 +15,7 @@ spec:
   template:
     metadata:
       labels:
+        group: "service-discovery"
         name: {{.Name}}
         test: {{.TestClientLabel}}
         type: {{.TypeLabelValue}}
