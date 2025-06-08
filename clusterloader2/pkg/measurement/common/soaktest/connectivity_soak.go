@@ -34,8 +34,8 @@ const (
 	targetFilePath                  = "manifests/target_deploy.yaml"
 
 	// network policies
-	netPolFilePath    = "network-policy-soak/manifests/network_policy.yaml"
-	APIserverFilePath = "network-policy-soak/manifests/allow_apiserver_np.yaml"
+	netPolFilePath    = "manifests/network_policy.yaml"
+	APIserverFilePath = "manifests/allow_apiserver_np.yaml"
 
 	// variables
 	clientNamespace = "soak-client"
@@ -227,6 +227,10 @@ func (m *ConnectivitySoakMeasurement) initialize(config *measurement.Config, pha
 
 	if m.l3l4port, err = util.GetBoolOrDefault(config.Params, "l3l4port", false); err != nil {
 		return fmt.Errorf("phase: start, %s: failed to get l3l4port: %v", m.String(), err)
+	}
+
+	if m.enableNetworkPolicy, err = util.GetBoolOrDefault(config.Params, "enableNetworkPolicy", false); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to get enableNetworkPolicy: %v", m.String(), err)
 	}
 
 	if m.targetPath, err = util.GetStringOrDefault(config.Params, "targetPath", "/"); err != nil {
