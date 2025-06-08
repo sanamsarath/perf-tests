@@ -705,14 +705,14 @@ func (m *ConnectivitySoakMeasurement) waitForPodsDeleted(namespace, labelKey, la
 
 func (m *ConnectivitySoakMeasurement) restart() ([]measurement.Summary, error) {
 
-	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
+	time.Sleep(300 * time.Second) //5 minute wait so requests can occur
 
 	// deploy the client pods
 	if err := m.deployClientPods("restart"); err != nil {
 		return nil, err
 	}
 
-	time.Sleep(120 * time.Second) //2 minute wait so requests can occur
+	time.Sleep(300 * time.Second) //5 minute wait so requests can occur
 
 	return nil, nil
 
