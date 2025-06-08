@@ -173,8 +173,8 @@ steps:
 {{range $i := Loop $repeats}}
 - name: Network Policy Soak Test - Start
   measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
+  - Identifier: ConnectivitySoakMeasurement
+    Method: ConnectivitySoakMeasurement
     Params:
       action: start
       targetLabelKey: app
@@ -196,20 +196,20 @@ steps:
 {{if $RESTART_DELETION_ENABLED}}
 - name: Network Policy Soak Test - RestartPods
   measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
+  - Identifier: ConnectivitySoakMeasurement
+    Method: ConnectivitySoakMeasurement
     Params:
       action: restart
 - name: Network Policy Soak Test - Delete Pods
   measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
+  - Identifier: ConnectivitySoakMeasurement
+    Method: ConnectivitySoakMeasurement
     Params:
       action: delete-pods
 - name: Network Policy Soak Test - Delete CNPS
   measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
+  - Identifier: ConnectivitySoakMeasurement
+    Method: ConnectivitySoakMeasurement
     Params:
       action: delete-ccnps-cnps
 {{end}}
@@ -217,8 +217,8 @@ steps:
 # 5. gather network performance measurement (wait and gather results)
 - name: Network Policy Soak Test - Gather Results
   measurements:
-  - Identifier: NetworkPolicySoakMeasurement
-    Method: NetworkPolicySoakMeasurement
+  - Identifier: ConnectivitySoakMeasurement
+    Method: ConnectivitySoakMeasurement
     Params:
       action: gather #gather will wait for the soak test to finish
 # 7. gather cilium envoy metrics
