@@ -95,6 +95,8 @@ func (m *ConnectivitySoakMeasurement) Execute(config *measurement.Config) ([]mea
 		return m.gather()
 	case "restart":
 		return m.restart()
+	case "delete k8s nps":
+		return m.deleteK8sNPs()
 	case "delete-ccnps-cnps":
 		return m.deleteNetworkPolicies()
 	case "delete-pods":
@@ -140,6 +142,7 @@ func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measu
 
 	if m.enableNetworkPolicy {
 		// deploy the network policy to allow traffic from client to target pods
+		klog.Infof(m.npType)
 		if err := m.deployNetworkPolicy(); err != nil {
 			return nil, err
 		}
@@ -569,6 +572,47 @@ func (m *ConnectivitySoakMeasurement) envoyResourceGather() error {
 	go m.gatherers.StartGatheringData()
 
 	return nil
+}
+
+func (nps *ConnectivitySoakMeasurement) deleteK8sNPs() ([]measurement.Summary, error) {
+    dynamicClient := nps.framework.GetDynamicClients().GetClient()
+
+    k8sGVR := schema.GroupVersionResource{
+        Group:    "networking.k8s.io",
+        Version:  "v1",
+        Resource: "networkpolicies",
+    }
+
+    // List all NetworkPolicies in all namespaces
+    npsList, err := dynamicClient.Resource(k8sGVR).List(context.TODO(), metav1.ListOptions{})
+    if err != nil {
+        klog.Errorf("failed to list NetworkPolicies: %v", err)
+        return nil, err
+    }
+
+    // Define a set of NetworkPolicy names you want to keep
+    keepNames := map[string]bool{
+        "konnectivity-agent":     true,
+        "allow-egress-apiserver": true,
+        // Add more names as needed
+    }
+
+    for _, item := range npsList.Items {
+        name := item.GetName()
+        namespace := item.GetNamespace()
+        if keepNames[name] {
+            klog.Infof("Skipping NetworkPolicy %s/%s", namespace, name)
+            continue
+        }
+        // Delete the NetworkPolicy
+        err := dynamicClient.Resource(k8sGVR).Namespace(namespace).Delete(context.TODO(), name, metav1.DeleteOptions{})
+        if err != nil {
+            klog.Errorf("failed to delete NetworkPolicy %s/%s: %v", namespace, name, err)
+        } else {
+            klog.Infof("Deleted NetworkPolicy %s/%s", namespace, name)
+        }
+    }
+    return nil, nil
 }
 
 func (nps *ConnectivitySoakMeasurement) deleteNetworkPolicies() ([]measurement.Summary, error) {

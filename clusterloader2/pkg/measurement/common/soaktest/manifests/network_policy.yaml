@@ -27,7 +27,7 @@ spec:
         - method: GET
           path: {{.TargetPath}}
 {{end}}
-{{else if .NetworkPolicy_Type "ccnp" }}
+{{else if eq .NetworkPolicy_Type "ccnp" }}
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata:
@@ -76,6 +76,6 @@ spec:
         matchLabels:
           kubernetes.io/metadata.name: {{.TargetNamespace}}
     ports:
-      port: "{{.TargetPort}}"
-      protocol: TCP  
+      - port: {{.TargetPort}}
+        protocol: TCP
 {{end}}

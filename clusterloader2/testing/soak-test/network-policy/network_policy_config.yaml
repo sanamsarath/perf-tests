@@ -6,7 +6,7 @@
 {{$WORKERS_PER_CLIENT := DefaultParam .CL2_WORKERS_PER_CLIENT 5}}
 {{$DURATION := DefaultParam .CL2_DURATION 600}}
 {{$repeats := DefaultParam .CL2_REPEATS 1}}
-{{$Network_Policy_Type := DefaultParam .CL2_NETWORK_POLICY_TYPE "k8s"}}
+{{$Network_Policy_Type := DefaultParam .CL2_NETWORK_POLICY_TYPE "none"}}
 {{$NET_POLICY_L7_ENABLED := DefaultParam .CL2_NET_POLICY_L7_ENABLED false}}
 {{$L3_L4_PORT := DefaultParam .CL2_L3_L4_PORT false}}
 {{$RESTART_DELETION_ENABLED := DefaultParam .CL2_RESTART_DELETION_ENABLED false}}
@@ -23,12 +23,74 @@ steps:
 # 1. start cilium agent metrics & client metrics
 # 2. start cilium envoy metrics
 # 3. start resource usage metrics (cpu, memory usage of Envoy) 
-# 4. start network performance measurement (setup and run)
-# 5. gather network performance measurement (wait and gather results)
+# 4. start connectivity soak performance measurement (setup and run)
+# 5. gather connectivity soak performance measurement (wait and gather results)
 # 6. gather resource usage metrics
 # 7. gather cilium envoy metrics
 # 8. gather cilium agent metrics & client metrics
 # 1. start cilium agent metrics
+- name: APIServer Metrics
+  measurements:
+  - Identifier: ApiserverAvgCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Apiserver Average CPU Usage
+      metricVersion: v1
+      unit: cpu
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, avg_over_time(rate(process_cpu_seconds_total{endpoint="apiserver"}[1m])[%v:]))
+      - name: Perc90
+        query: quantile(0.90, avg_over_time(rate(process_cpu_seconds_total{endpoint="apiserver"}[1m])[%v:]))
+      - name: Perc50
+        query: quantile(0.50, avg_over_time(rate(process_cpu_seconds_total{endpoint="apiserver"}[1m])[%v:]))
+  - Identifier: ApiserverMaxCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Apiserver Max CPU Usage
+      metricVersion: v1
+      unit: cpu
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, max_over_time(rate(process_cpu_seconds_total{endpoint="apiserver"}[1m])[%v:]))
+      - name: Perc90
+        query: quantile(0.90, max_over_time(rate(process_cpu_seconds_total{endpoint="apiserver"}[1m])[%v:]))
+      - name: Perc50
+        query: quantile(0.50, max_over_time(rate(process_cpu_seconds_total{endpoint="apiserver"}[1m])[%v:]))
+  - Identifier: ApiserverAvgMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Apiserver Avg Memory Usage
+      metricVersion: v1
+      unit: MB
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, avg_over_time(process_resident_memory_bytes{endpoint="apiserver"}[%v:]) / 1024 / 1024)
+      - name: Perc90
+        query: quantile(0.90, avg_over_time(process_resident_memory_bytes{endpoint="apiserver"}[%v:]) / 1024 / 1024)
+      - name: Perc50
+        query: quantile(0.5, avg_over_time(process_resident_memory_bytes{endpoint="apiserver"}[%v:]) / 1024 / 1024)
+  - Identifier: ApiserverMaxMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Apiserver Max Memory Usage
+      metricVersion: v1
+      unit: MB
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, max_over_time(process_resident_memory_bytes{endpoint="apiserver"}[%v:]) / 1024 / 1024)
+      - name: Perc90
+        query: quantile(0.90, max_over_time(process_resident_memory_bytes{endpoint="apiserver"}[%v:]) / 1024 / 1024)
+      - name: Perc50
+        query: quantile(0.5, max_over_time(process_resident_memory_bytes{endpoint="apiserver"}[%v:]) / 1024 / 1024)
 - name: Cilium Agent Metrics
   measurements:
   - Identifier: CiliumAgentAverageCPUUsage
@@ -169,9 +231,9 @@ steps:
           query: max(max_over_time(envoy_server_memory_allocated[%v:])) / 1024 / 1024
         - name: envoy_memory_heap_size_max
           query: max(max_over_time(envoy_server_memory_heap_size[%v:])) / 1024 / 1024
-# 4. start network performance measurement (setup and run)
+# 4. start connectivity soak performance measurement (setup and run)
 {{range $i := Loop $repeats}}
-- name: Network Policy Soak Test - Start
+- name: Connectivity Soak Test - Start
   measurements:
   - Identifier: ConnectivitySoakMeasurement
     Method: ConnectivitySoakMeasurement
@@ -185,28 +247,28 @@ steps:
       clientReplicasPerDep: {{$NUMBER_OF_CLIENTS_PER_Group}}
       targetPort: {{$TARGET_PORT}}
       targetPort2: {{$TARGET_PORT2}}
-      enableNetworkPolicy: true
       l7Enabled: {{$NET_POLICY_L7_ENABLED}}
       l3l4port: {{$L3_L4_PORT}}
+      enableNetworkPolicy: true
       resourceGatheringEnabled: false
       targetPath: /
       testDuration: "{{$DURATION}}"
       workerPerClient: {{$WORKERS_PER_CLIENT}}
       npType: {{$Network_Policy_Type}}
 {{if $RESTART_DELETION_ENABLED}}
-- name: Network Policy Soak Test - RestartPods
+- name: Connectivity Soak Test - RestartPods
   measurements:
   - Identifier: ConnectivitySoakMeasurement
     Method: ConnectivitySoakMeasurement
     Params:
       action: restart
-- name: Network Policy Soak Test - Delete Pods
+- name: Connectivity Soak Test - Delete Pods
   measurements:
   - Identifier: ConnectivitySoakMeasurement
     Method: ConnectivitySoakMeasurement
     Params:
       action: delete-pods
-- name: Network Policy Soak Test - Delete CNPS
+- name: Network Policy Soak Test - Delete CNPs
   measurements:
   - Identifier: ConnectivitySoakMeasurement
     Method: ConnectivitySoakMeasurement
@@ -215,7 +277,7 @@ steps:
 {{end}}
 {{end}}
 # 5. gather network performance measurement (wait and gather results)
-- name: Network Policy Soak Test - Gather Results
+- name: Connectivity Soak Test - Gather Results
   measurements:
   - Identifier: ConnectivitySoakMeasurement
     Method: ConnectivitySoakMeasurement
@@ -229,6 +291,28 @@ steps:
     Params:
       action: gather
       enableViolations: true
+- name: APIServer Metrics
+  measurements:
+    - Identifier: ApiserverAvgCPUUsage
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: ApiserverMaxCPUUsage
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: ApiserverAvgMemUsage
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+    - Identifier: ApiserverMaxMemUsage
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
 # 8. gather cilium agent metrics
 - name: Cilium Metrics
   measurements:
