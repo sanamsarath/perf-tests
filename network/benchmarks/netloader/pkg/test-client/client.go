@@ -27,7 +27,7 @@ type TestClient struct {
 	interval           time.Duration
 	concurrentThreads  int
 	destPort           int
-	destPort2		   int
+	destPort2          int
 	destPath           string
 	stopChan           chan os.Signal
 	HttpMetrics        *HttpMetrics
@@ -41,10 +41,10 @@ func NewTestClient(stopCh chan os.Signal) (*TestClient, error) {
 		HttpMetrics: NewHttpMetrics(),
 		httpClient: &http.Client{
 			Transport: &http2.Transport{
-				AllowHTTP: true,
+				AllowHTTP:       true,
 				IdleConnTimeout: 5 * time.Second,
 				DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-					//add timeout 
+					//add timeout
 					return net.Dial(network, addr)
 				},
 			},
@@ -94,7 +94,7 @@ func (c *TestClient) Run() {
 
 	klog.Info("Sleeping 30 seconds")
 	time.Sleep(30 * time.Second) // wait for cilium agent reconcillation of policies
-	
+
 	// start metrics server
 	go func() {
 		klog.Info("Starting metrics server")
@@ -103,7 +103,6 @@ func (c *TestClient) Run() {
 			klog.Fatalf("Failed to start metrics server: %v", err)
 		}
 	}()
-
 
 	// start the test
 	c.startTest()
@@ -127,24 +126,24 @@ func (c *TestClient) startTest() {
 		klog.Fatalf("Failed to create k8s client: %v", err)
 	}
 
-	// get the list of pods
-	podList, err := k8sClient.CoreV1().Pods(c.namespace).List(context.Background(), metav1.ListOptions{LabelSelector: c.dest_labelSelector, Limit: 128})
+	// get the list of services instead of pods
+	serviceList, err := k8sClient.CoreV1().Services(c.namespace).List(context.Background(), metav1.ListOptions{LabelSelector: c.dest_labelSelector, Limit: 128})
 	if err != nil {
-		klog.Fatalf("Failed to get pod list: %v", err)
+		klog.Fatalf("Failed to get service list: %v", err)
 	}
 
-	// get the list of pod IPs
-	podIps := utils.GetPodIPs(podList)
-	if len(podIps) == 0 {
-		klog.Fatalf("No pods found with label selector %s", c.dest_labelSelector)
+	// get the list of service DNS names
+	serviceDNSNames := utils.GetServiceDNSNames(serviceList, c.namespace)
+	if len(serviceDNSNames) == 0 {
+		klog.Fatalf("No services found with label selector %s", c.dest_labelSelector)
 	}
 
-	c.iplookup = utils.NewIplookup(podIps)
+	c.iplookup = utils.NewIplookup(serviceDNSNames)
 	ctx, cancel := context.WithTimeout(context.Background(), c.duration)
 	defer cancel()
 
-	// new common channel to send ip addresses to workers
-	ipChan := make(chan string, c.concurrentThreads)
+	// new common channel to send service DNS names to workers
+	serviceChan := make(chan string, c.concurrentThreads)
 
 	var wg sync.WaitGroup
 
@@ -155,11 +154,11 @@ func (c *TestClient) startTest() {
 		for {
 			select {
 			case <-ticker:
-				ip := c.iplookup.GetIp()
-				// broadcast ip to all workers
+				serviceDNS := c.iplookup.GetIp() // reusing GetIp method for DNS names
+				// broadcast service DNS name to all workers
 				for i := 0; i < c.concurrentThreads; i++ {
 					select {
-					case ipChan <- ip:
+					case serviceChan <- serviceDNS:
 					default:
 						// skip if channel is full
 					}
@@ -173,15 +172,15 @@ func (c *TestClient) startTest() {
 
 	for i := 0; i < c.concurrentThreads; i++ {
 		wg.Add(1)
-		// pass ipChan directly to worker
-		go c.worker(&wg, ctx, ipChan)
+		// pass serviceChan directly to worker
+		go c.worker(&wg, ctx, serviceChan)
 	}
 
 	wg.Wait()
 }
 
 // update worker signature to receive string
-func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, ipChan <-chan string) {
+func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, serviceChan <-chan string) {
 	defer wg.Done()
 	destPorts := []string{strconv.Itoa(c.destPort), strconv.Itoa(c.destPort2)}
 	for {
@@ -189,10 +188,10 @@ func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, ipChan <-ch
 		case <-ctx.Done():
 			klog.Info("Load duration expired, stopping worker")
 			return
-		case ip := <-ipChan:
+		case serviceDNS := <-serviceChan:
 			for _, dPort := range destPorts {
-				// url
-				url := "http://" + ip + ":" + dPort + c.destPath
+				// url using service DNS name (forces DNS resolution)
+				url := "http://" + serviceDNS + ":" + dPort + c.destPath
 
 				// start time
 				start := time.Now()
@@ -220,9 +219,8 @@ func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, ipChan <-ch
 				// record the latency - optional via env var
 				if os.Getenv("RECORD_LATENCY") == "true" {
 					latency := time.Since(start).Seconds()
-					c.HttpMetrics.latencies.WithLabelValues(ip).Observe(latency)
+					c.HttpMetrics.latencies.WithLabelValues(serviceDNS).Observe(latency)
 				}
-			
 
 				// Inc total and success counters
 				c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()

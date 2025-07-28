@@ -32,10 +32,16 @@ const (
 	clusterRoleBindingFilePath      = "manifests/clusterrolebinding.yaml"
 	clientFilePath                  = "manifests/client_deploy.yaml"
 	targetFilePath                  = "manifests/target_deploy.yaml"
+	targetServiceFilePath           = "manifests/target_service.yaml"
 
 	// network policies
 	netPolFilePath    = "manifests/network_policy.yaml"
 	APIserverFilePath = "manifests/allow_apiserver_np.yaml"
+	dnsccnpFilePath   = "manifests/dns_ccnp.yaml"
+
+	// DNS and LRP
+	nodelocaldnsFilePath = "manifests/nodelocaldns.yaml"
+	lrpFilePath          = "manifests/nodelocaldns_lrp.yaml"
 
 	// variables
 	clientNamespace = "soak-client"
@@ -124,6 +130,16 @@ func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measu
 
 		// deploy the RBAC resources
 		if err := m.deployRBACResources(); err != nil {
+			return nil, err
+		}
+
+		// deploy NodeLocalDNS DaemonSet and LocalRedirectPolicy
+		if err := m.deployNodeLocalDNSAndLRP(); err != nil {
+			return nil, err
+		}
+
+		// deploy DNS CCNP to allow client pods DNS access
+		if err := m.deployDNSCCNP(); err != nil {
 			return nil, err
 		}
 
@@ -283,6 +299,43 @@ func (m *ConnectivitySoakMeasurement) deployRBACResources() error {
 	return nil
 }
 
+func (m *ConnectivitySoakMeasurement) deployNodeLocalDNSAndLRP() error {
+	klog.Infof("Deploying NodeLocalDNS DaemonSet and LocalRedirectPolicy")
+
+	// Deploy NodeLocalDNS DaemonSet
+	templateMap := map[string]interface{}{
+		// No template variables needed for the static DaemonSet
+	}
+
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, nodelocaldnsFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply NodeLocalDNS DaemonSet manifest: %v", m.String(), err)
+	}
+
+	// Deploy LocalRedirectPolicy
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, lrpFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply LocalRedirectPolicy manifest: %v", m.String(), err)
+	}
+
+	klog.Infof("Successfully deployed NodeLocalDNS DaemonSet and LocalRedirectPolicy")
+	return nil
+}
+
+func (m *ConnectivitySoakMeasurement) deployDNSCCNP() error {
+	klog.Infof("Deploying DNS CCNP for client DNS access")
+
+	templateMap := map[string]interface{}{
+		"ClientLabelKey":   m.clientLabelKey,
+		"ClientLabelValue": m.clientLabelVal,
+	}
+
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, dnsccnpFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply DNS CCNP manifest: %v", m.String(), err)
+	}
+
+	klog.Infof("Successfully deployed DNS CCNP")
+	return nil
+}
+
 func (m *ConnectivitySoakMeasurement) deployTargetPods(phase string) error {
 	// Validate that the replica count is positive
 	if m.targetReplicasPerNs <= 0 {
@@ -312,13 +365,25 @@ func (m *ConnectivitySoakMeasurement) deployTargetPods(phase string) error {
 		for _, ns := range m.targetNamespaces[i:end] {
 			batchTemplateMap["TargetNamespace"] = ns
 			if phase == "start" {
+				// Deploy target deployment
 				if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetFilePath, batchTemplateMap); err != nil {
 					return fmt.Errorf("phase: %s, %s NS: %s, failed to apply target deployment manifest: %v", phase, m.String(), ns, err)
 				}
 
+				// Deploy target service for DNS resolution
+				if err := m.framework.ApplyTemplatedManifests(manifestsFS, targetServiceFilePath, batchTemplateMap); err != nil {
+					return fmt.Errorf("phase: %s, %s NS: %s, failed to apply target service manifest: %v", phase, m.String(), ns, err)
+				}
+
 			} else {
+				// Update target deployment
 				if err := m.framework.UpdateTemplatedManifests(manifestsFS, targetFilePath, batchTemplateMap); err != nil {
 					return fmt.Errorf("phase: %s, %s NS: %s, failed to update target deployment manifest: %v", phase, m.String(), ns, err)
+				}
+
+				// Update target service
+				if err := m.framework.UpdateTemplatedManifests(manifestsFS, targetServiceFilePath, batchTemplateMap); err != nil {
+					return fmt.Errorf("phase: %s, %s NS: %s, failed to update target service manifest: %v", phase, m.String(), ns, err)
 				}
 
 			}
@@ -575,44 +640,44 @@ func (m *ConnectivitySoakMeasurement) envoyResourceGather() error {
 }
 
 func (nps *ConnectivitySoakMeasurement) deleteK8sNPs() ([]measurement.Summary, error) {
-    dynamicClient := nps.framework.GetDynamicClients().GetClient()
+	dynamicClient := nps.framework.GetDynamicClients().GetClient()
 
-    k8sGVR := schema.GroupVersionResource{
-        Group:    "networking.k8s.io",
-        Version:  "v1",
-        Resource: "networkpolicies",
-    }
+	k8sGVR := schema.GroupVersionResource{
+		Group:    "networking.k8s.io",
+		Version:  "v1",
+		Resource: "networkpolicies",
+	}
 
-    // List all NetworkPolicies in all namespaces
-    npsList, err := dynamicClient.Resource(k8sGVR).List(context.TODO(), metav1.ListOptions{})
-    if err != nil {
-        klog.Errorf("failed to list NetworkPolicies: %v", err)
-        return nil, err
-    }
+	// List all NetworkPolicies in all namespaces
+	npsList, err := dynamicClient.Resource(k8sGVR).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		klog.Errorf("failed to list NetworkPolicies: %v", err)
+		return nil, err
+	}
 
-    // Define a set of NetworkPolicy names you want to keep
-    keepNames := map[string]bool{
-        "konnectivity-agent":     true,
-        "allow-egress-apiserver": true,
-        // Add more names as needed
-    }
+	// Define a set of NetworkPolicy names you want to keep
+	keepNames := map[string]bool{
+		"konnectivity-agent":     true,
+		"allow-egress-apiserver": true,
+		// Add more names as needed
+	}
 
-    for _, item := range npsList.Items {
-        name := item.GetName()
-        namespace := item.GetNamespace()
-        if keepNames[name] {
-            klog.Infof("Skipping NetworkPolicy %s/%s", namespace, name)
-            continue
-        }
-        // Delete the NetworkPolicy
-        err := dynamicClient.Resource(k8sGVR).Namespace(namespace).Delete(context.TODO(), name, metav1.DeleteOptions{})
-        if err != nil {
-            klog.Errorf("failed to delete NetworkPolicy %s/%s: %v", namespace, name, err)
-        } else {
-            klog.Infof("Deleted NetworkPolicy %s/%s", namespace, name)
-        }
-    }
-    return nil, nil
+	for _, item := range npsList.Items {
+		name := item.GetName()
+		namespace := item.GetNamespace()
+		if keepNames[name] {
+			klog.Infof("Skipping NetworkPolicy %s/%s", namespace, name)
+			continue
+		}
+		// Delete the NetworkPolicy
+		err := dynamicClient.Resource(k8sGVR).Namespace(namespace).Delete(context.TODO(), name, metav1.DeleteOptions{})
+		if err != nil {
+			klog.Errorf("failed to delete NetworkPolicy %s/%s: %v", namespace, name, err)
+		} else {
+			klog.Infof("Deleted NetworkPolicy %s/%s", namespace, name)
+		}
+	}
+	return nil, nil
 }
 
 func (nps *ConnectivitySoakMeasurement) deleteNetworkPolicies() ([]measurement.Summary, error) {
@@ -762,6 +827,108 @@ func (m *ConnectivitySoakMeasurement) restart() ([]measurement.Summary, error) {
 
 }
 
+func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
+	klog.Infof("Cleaning up DNS infrastructure (NodeLocalDNS, LocalRedirectPolicy, and DNS CCNP)")
+
+	dynamicClient := m.framework.GetDynamicClients().GetClient()
+
+	// First delete NodeLocalDNS DaemonSet (remove cache pods)
+	if err := m.k8sClient.AppsV1().DaemonSets("kube-system").Delete(context.TODO(), "node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS DaemonSet: %v", err)
+	} else {
+		klog.Infof("Successfully deleted NodeLocalDNS DaemonSet")
+	}
+
+	// Then delete LocalRedirectPolicy (stop redirecting to non-existent pods)
+	lrpGVR := schema.GroupVersionResource{
+		Group:    "cilium.io",
+		Version:  "v2",
+		Resource: "localredirectpolicies",
+	}
+
+	if err := dynamicClient.Resource(lrpGVR).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+		klog.Errorf("failed to delete LocalRedirectPolicy: %v", err)
+	} else {
+		klog.Infof("Successfully deleted LocalRedirectPolicy")
+	}
+
+	// Wait for LRP to be fully deleted
+	if err := m.waitForResourcesDeleted(dynamicClient, lrpGVR, ""); err != nil {
+		klog.Errorf("failed to wait for LocalRedirectPolicy to be deleted: %v", err)
+	}
+
+	// Finally delete DNS CCNP (allow fallback to regular kube-dns)
+	dnsccnpGVR := schema.GroupVersionResource{
+		Group:    "cilium.io",
+		Version:  "v2",
+		Resource: "ciliumclusterwidenetworkpolicies",
+	}
+
+	// Delete the specific DNS CCNP by name if it exists
+	if err := dynamicClient.Resource(dnsccnpGVR).Delete(context.TODO(), "allow-client-dns-access", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete DNS CCNP: %v", err)
+	} else {
+		klog.Infof("Successfully deleted DNS CCNP")
+	}
+
+	// Clean up remaining NodeLocalDNS resources
+	// Delete NodeLocalDNS ConfigMap
+	if err := m.k8sClient.CoreV1().ConfigMaps("kube-system").Delete(context.TODO(), "node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS ConfigMap: %v", err)
+	}
+
+	// Delete NodeLocalDNS ServiceAccount
+	if err := m.k8sClient.CoreV1().ServiceAccounts("kube-system").Delete(context.TODO(), "node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS ServiceAccount: %v", err)
+	}
+
+	// Delete NodeLocalDNS ClusterRole
+	if err := m.k8sClient.RbacV1().ClusterRoles().Delete(context.TODO(), "system:node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS ClusterRole: %v", err)
+	}
+
+	// Delete NodeLocalDNS ClusterRoleBinding
+	if err := m.k8sClient.RbacV1().ClusterRoleBindings().Delete(context.TODO(), "system:node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS ClusterRoleBinding: %v", err)
+	}
+
+	klog.Infof("DNS infrastructure cleanup completed")
+	return nil
+}
+
+func (m *ConnectivitySoakMeasurement) waitForResourcesDeleted(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for resources of type %s to be deleted", gvr.Resource)
+		default:
+			var list *unstructured.UnstructuredList
+			var err error
+
+			if namespace == "" {
+				list, err = dynamicClient.Resource(gvr).List(context.TODO(), metav1.ListOptions{})
+			} else {
+				list, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.TODO(), metav1.ListOptions{})
+			}
+
+			if err != nil {
+				return fmt.Errorf("failed to list resources of type %s: %v", gvr.Resource, err)
+			}
+
+			if len(list.Items) == 0 {
+				klog.Infof("All resources of type %s have been deleted", gvr.Resource)
+				return nil
+			}
+
+			klog.Infof("Waiting for %d resources of type %s to be deleted...", len(list.Items), gvr.Resource)
+			time.Sleep(1 * time.Second)
+		}
+	}
+}
+
 func (m *ConnectivitySoakMeasurement) Dispose() {
 	// delete RBAC resources
 	if err := m.k8sClient.RbacV1().ClusterRoleBindings().Delete(context.TODO(), fmt.Sprintf("%s-crb", clientName), metav1.DeleteOptions{}); err != nil {
@@ -776,19 +943,9 @@ func (m *ConnectivitySoakMeasurement) Dispose() {
 		klog.Errorf("phase: gather, %s: failed to delete service account: %v", m.String(), err)
 	}
 
-	if m.enableNetworkPolicy {
-		//delete cnps & or ccnps
-		m.deleteNetworkPolicies()
-	}
-
-	// delete client pods
+	// delete client pods first (stop generating traffic)
 	if err := m.k8sClient.AppsV1().Deployments(clientNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
 		klog.Errorf("phase: gather, %s: failed to delete client deployments: %v", m.String(), err)
-	}
-
-	// delte client namespace
-	if err := m.k8sClient.CoreV1().Namespaces().Delete(context.TODO(), clientNamespace, metav1.DeleteOptions{}); err != nil {
-		klog.Errorf("phase: gather, %s: failed to delete namespace %s: %v", m.String(), clientNamespace, err)
 	}
 
 	// clear target deployments from all the target namespaces using label selector
@@ -800,6 +957,21 @@ func (m *ConnectivitySoakMeasurement) Dispose() {
 		// add a delay to avoid API server throttling,
 		// wait for 500ms before deleting the next deployment
 		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Clean up DNS infrastructure after pods are deleted (safe cleanup)
+	if err := m.cleanupDNSInfrastructure(); err != nil {
+		klog.Errorf("phase: dispose, %s: failed to cleanup DNS infrastructure: %v", m.String(), err)
+	}
+
+	if m.enableNetworkPolicy {
+		//delete cnps & or ccnps
+		m.deleteNetworkPolicies()
+	}
+
+	// delte client namespace
+	if err := m.k8sClient.CoreV1().Namespaces().Delete(context.TODO(), clientNamespace, metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("phase: gather, %s: failed to delete namespace %s: %v", m.String(), clientNamespace, err)
 	}
 
 	// stop gatherers

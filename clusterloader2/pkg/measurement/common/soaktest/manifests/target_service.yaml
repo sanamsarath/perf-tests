@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    group: "service-discovery"
+    {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
+    {{ (StructuralData .TargetDeploymentLabelKey)}}: {{.TargetDeploymentLabelValue}}
+  name: "{{.TargetName}}-service"
+  namespace: {{.TargetNamespace}}
+spec:
+  ports:
+  - name: http-port
+    port: {{.TargetPort}}
+    protocol: TCP
+    targetPort: {{.TargetPort}}
+  - name: http-port2
+    port: {{.TargetPort2}}
+    protocol: TCP
+    targetPort: {{.TargetPort2}}
+  selector:
+    {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
+    {{ (StructuralData .TargetDeploymentLabelKey)}}: {{.TargetDeploymentLabelValue}}
+  type: ClusterIP

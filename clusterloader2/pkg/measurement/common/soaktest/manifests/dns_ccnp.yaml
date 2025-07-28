@@ -1,0 +1,39 @@
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-client-dns-access
+spec:
+  endpointSelector:
+    matchLabels:
+    {{ (StructuralData .ClientLabelKey)}}: {{.ClientLabelValue}}
+  egress:
+  # Allow client pods to resolve server services via DNS
+  - toEndpoints:
+    - matchLabels:
+        k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+  # Allow client pods to use NodeLocalDNS cache
+  - toEndpoints:
+    - matchLabels:
+        k8s-app: node-local-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+  # Allow client pods to connect to server services after DNS resolution
+  - toEndpoints:
+    - matchLabels:
+        app: server
+    toPorts:
+    - ports:
+      - port: "80"
+        protocol: TCP
+      - port: "90"
+        protocol: TCP

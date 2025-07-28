@@ -45,3 +45,16 @@ func GetPodIPs(podList *corev1.PodList) []string {
 	}
 	return podIPs
 }
+
+// get service DNS names from list of services
+func GetServiceDNSNames(serviceList *corev1.ServiceList, namespace string) []string {
+	var serviceDNSNames []string
+	for _, service := range serviceList.Items {
+		// construct the FQDN for the service
+		// format: service-name.namespace.svc.cluster.local
+		dnsName := service.Name + "." + namespace + ".svc.cluster.local"
+		serviceDNSNames = append(serviceDNSNames, dnsName)
+		klog.Infof("Added service DNS name: %s", dnsName)
+	}
+	return serviceDNSNames
+}
