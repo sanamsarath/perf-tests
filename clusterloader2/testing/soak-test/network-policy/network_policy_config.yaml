@@ -249,32 +249,32 @@ steps:
       targetPort2: {{$TARGET_PORT2}}
       l7Enabled: {{$NET_POLICY_L7_ENABLED}}
       l3l4port: {{$L3_L4_PORT}}
-      enableNetworkPolicy: true
+      enableNetworkPolicy: false
       resourceGatheringEnabled: false
       targetPath: /
       testDuration: "{{$DURATION}}"
       workerPerClient: {{$WORKERS_PER_CLIENT}}
       npType: {{$Network_Policy_Type}}
-{{if $RESTART_DELETION_ENABLED}}
-- name: Connectivity Soak Test - RestartPods
-  measurements:
-  - Identifier: ConnectivitySoakMeasurement
-    Method: ConnectivitySoakMeasurement
-    Params:
-      action: restart
-- name: Connectivity Soak Test - Delete Pods
-  measurements:
-  - Identifier: ConnectivitySoakMeasurement
-    Method: ConnectivitySoakMeasurement
-    Params:
-      action: delete-pods
-- name: Network Policy Soak Test - Delete CNPs
-  measurements:
-  - Identifier: ConnectivitySoakMeasurement
-    Method: ConnectivitySoakMeasurement
-    Params:
-      action: delete-ccnps-cnps
-{{end}}
+# {{if $RESTART_DELETION_ENABLED}}
+# - name: Connectivity Soak Test - RestartPods
+#   measurements:
+#   - Identifier: ConnectivitySoakMeasurement
+#     Method: ConnectivitySoakMeasurement
+#     Params:
+#       action: restart
+# - name: Connectivity Soak Test - Delete Pods
+#   measurements:
+#   - Identifier: ConnectivitySoakMeasurement
+#     Method: ConnectivitySoakMeasurement
+#     Params:
+#       action: delete-pods
+# - name: Network Policy Soak Test - Delete CNPs
+#   measurements:
+#   - Identifier: ConnectivitySoakMeasurement
+#     Method: ConnectivitySoakMeasurement
+#     Params:
+#       action: delete-ccnps-cnps
+# {{end}}
 {{end}}
 # 5. gather network performance measurement (wait and gather results)
 - name: Connectivity Soak Test - Gather Results

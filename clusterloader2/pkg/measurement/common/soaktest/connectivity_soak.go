@@ -1,12 +1,14 @@
 package soaktest
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	api_corev1 "k8s.io/api/core/v1"
@@ -15,6 +17,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/exec"
 	"k8s.io/klog/v2"
 	"k8s.io/perf-tests/clusterloader2/pkg/framework"
 	"k8s.io/perf-tests/clusterloader2/pkg/framework/client"
@@ -40,8 +46,14 @@ const (
 	dnsccnpFilePath   = "manifests/dns_ccnp.yaml"
 
 	// DNS and LRP
-	nodelocaldnsFilePath = "manifests/nodelocaldns.yaml"
-	lrpFilePath          = "manifests/nodelocaldns_lrp.yaml"
+	nodelocaldnsCMFilePath         = "manifests/nodelocaldns_cm.yaml"
+	nodelocaldnsDSFilePath         = "manifests/nodelocaldns_ds.yaml"
+	nodelocaldnsCRFilePath         = "manifests/nodelocaldns_clusterrole.yaml"
+	nodelocaldnsCRBindingFilePath  = "manifests/nodelocaldns_crbinding.yaml"
+	nodelocaldnsServiceAccFilePath = "manifests/nodelocaldns_sa.yaml"
+	nodelocaldnsServiceFilePath    = "manifests/nodelocaldns_service.yaml"
+	lrpFilePath                    = "manifests/nodelocaldns_lrp.yaml"
+	busyboxDaemonSetFilePath       = "manifests/busybox_daemonset.yaml"
 
 	// variables
 	clientNamespace = "soak-client"
@@ -78,6 +90,10 @@ type ConnectivitySoakMeasurement struct {
 	// gatherers
 	gatherers                *gatherers.ContainerResourceGatherer
 	resourceGatheringEnabled bool
+	// DNS testing fields
+	restConfig      *rest.Config
+	dnsTestStopChan chan struct{}
+	dnsTestWg       sync.WaitGroup
 }
 
 func createConnectivitySoakMeasurement() measurement.Measurement {
@@ -143,6 +159,11 @@ func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measu
 			return nil, err
 		}
 
+		// Wait for busybox pods to come up and test DNS resolution
+		if err := m.waitForBusyboxPodsAndTestDNS(); err != nil {
+			return nil, err
+		}
+
 		//deploy target pods
 		if err := m.deployTargetPods("start"); err != nil {
 			return nil, err
@@ -185,6 +206,10 @@ func (m *ConnectivitySoakMeasurement) initialize(config *measurement.Config, pha
 	// initialization
 	m.k8sClient = config.ClusterFramework.GetClientSets().GetClient()
 	m.framework = config.ClusterFramework
+	m.restConfig = config.ClusterFramework.GetRestClient()
+
+	// Initialize DNS testing channels
+	m.dnsTestStopChan = make(chan struct{})
 
 	namespaceList, err := m.k8sClient.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
@@ -307,8 +332,28 @@ func (m *ConnectivitySoakMeasurement) deployNodeLocalDNSAndLRP() error {
 		// No template variables needed for the static DaemonSet
 	}
 
-	if err := m.framework.ApplyTemplatedManifests(manifestsFS, nodelocaldnsFilePath, templateMap); err != nil {
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, nodelocaldnsServiceAccFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply NodeLocalDNS Service Account manifest: %v", m.String(), err)
+	}
+
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, nodelocaldnsServiceFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply NodeLocalDNS Service  manifest: %v", m.String(), err)
+	}
+
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, nodelocaldnsCMFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply NodeLocalDNS ConfigMap manifest: %v", m.String(), err)
+	}
+
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, nodelocaldnsDSFilePath, templateMap); err != nil {
 		return fmt.Errorf("phase: start, %s: failed to apply NodeLocalDNS DaemonSet manifest: %v", m.String(), err)
+	}
+
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, nodelocaldnsCRFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply NodeLocalDNS Clusterrole manifest: %v", m.String(), err)
+	}
+
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, nodelocaldnsCRBindingFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply NodeLocalDNS Clusterrolebinding  manifest: %v", m.String(), err)
 	}
 
 	// Deploy LocalRedirectPolicy
@@ -316,7 +361,12 @@ func (m *ConnectivitySoakMeasurement) deployNodeLocalDNSAndLRP() error {
 		return fmt.Errorf("phase: start, %s: failed to apply LocalRedirectPolicy manifest: %v", m.String(), err)
 	}
 
-	klog.Infof("Successfully deployed NodeLocalDNS DaemonSet and LocalRedirectPolicy")
+	// Deploy busybox DaemonSet (1 pod per node)
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, busyboxDaemonSetFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply busybox DaemonSet manifest: %v", m.String(), err)
+	}
+
+	klog.Infof("Successfully deployed NodeLocalDNS DaemonSet, LocalRedirectPolicy, and busybox DaemonSet")
 	return nil
 }
 
@@ -557,6 +607,184 @@ func (m *ConnectivitySoakMeasurement) waitForDeploymentPodsReady(ctx context.Con
 	}
 
 	return nil
+}
+
+// waitForBusyboxPodsAndTestDNS waits for busybox DaemonSet pods to be ready and starts continuous DNS testing
+func (m *ConnectivitySoakMeasurement) waitForBusyboxPodsAndTestDNS() error {
+	klog.Infof("Waiting for busybox DaemonSet pods to be ready...")
+
+	// Wait for DaemonSet to be ready
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
+	daemonSetName := "busybox-daemonset"
+	namespace := "kube-system"
+
+	// Wait for DaemonSet to have all desired pods ready
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for busybox DaemonSet to be ready")
+		default:
+			ds, err := m.k8sClient.AppsV1().DaemonSets(namespace).Get(context.TODO(), daemonSetName, metav1.GetOptions{})
+			if err != nil {
+				klog.Warningf("Failed to get busybox DaemonSet: %v", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			klog.V(3).Infof("DaemonSet status: NumberReady=%d, DesiredNumberScheduled=%d", ds.Status.NumberReady, ds.Status.DesiredNumberScheduled)
+
+			if ds.Status.NumberReady == ds.Status.DesiredNumberScheduled && ds.Status.NumberReady > 0 {
+				klog.Infof("Busybox DaemonSet is ready with %d pods", ds.Status.NumberReady)
+				goto daemonSetReady
+			}
+
+			klog.Infof("Waiting for busybox DaemonSet - Ready: %d/%d", ds.Status.NumberReady, ds.Status.DesiredNumberScheduled)
+			time.Sleep(5 * time.Second)
+		}
+	}
+
+daemonSetReady:
+
+	// Start continuous DNS testing in a separate goroutine
+	klog.Infof("Starting continuous DNS testing on all busybox pods...")
+	m.dnsTestWg.Add(1)
+	go m.continuousDNSTest(namespace)
+
+	return nil
+}
+
+// continuousDNSTest runs DNS resolution tests continuously until stopped
+func (m *ConnectivitySoakMeasurement) continuousDNSTest(namespace string) {
+	defer m.dnsTestWg.Done()
+
+	labelSelector := "app=busybox"
+	testInterval := 30 * time.Second // Run DNS test every 30 seconds
+
+	klog.Infof("Starting continuous DNS testing loop...")
+
+	for {
+		select {
+		case <-m.dnsTestStopChan:
+			klog.Infof("Stopping continuous DNS testing...")
+			return
+		default:
+			// Get current busybox pods
+			podList, err := m.k8sClient.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+				LabelSelector: labelSelector,
+			})
+			if err != nil {
+				klog.Warningf("Failed to list busybox pods: %v", err)
+				time.Sleep(testInterval)
+				continue
+			}
+
+			if len(podList.Items) == 0 {
+				klog.Infof("No busybox pods found, DNS testing loop ending...")
+				return
+			}
+
+			// Test DNS resolution on each running pod
+			successCount := 0
+			for _, pod := range podList.Items {
+				if pod.Status.Phase != api_corev1.PodRunning {
+					continue
+				}
+
+				// Check if all containers are ready
+				allReady := true
+				for _, containerStatus := range pod.Status.ContainerStatuses {
+					if !containerStatus.Ready {
+						allReady = false
+						break
+					}
+				}
+				if !allReady {
+					continue
+				}
+
+				// Perform DNS test
+				if err := m.execDNSTestOnPod(pod.Name, namespace); err != nil {
+					klog.V(4).Infof("DNS test failed on pod %s: %v", pod.Name, err)
+				} else {
+					successCount++
+					klog.V(4).Infof("DNS test successful on pod %s", pod.Name)
+				}
+			}
+
+			if successCount > 0 {
+				klog.V(2).Infof("DNS resolution test successful on %d/%d running busybox pods", successCount, len(podList.Items))
+			} else {
+				klog.Warningf("DNS resolution failed on all %d busybox pods", len(podList.Items))
+			}
+
+			// Wait before next test cycle
+			time.Sleep(testInterval)
+		}
+	}
+}
+
+// execDNSTestOnPod performs actual nslookup command on a specific pod using Kubernetes exec API
+func (m *ConnectivitySoakMeasurement) execDNSTestOnPod(podName, namespace string) error {
+	cmd := []string{"nslookup", "www.google.com"}
+
+	// Create the exec request
+	req := m.k8sClient.CoreV1().RESTClient().
+		Post().
+		Namespace(namespace).
+		Resource("pods").
+		Name(podName).
+		SubResource("exec").
+		VersionedParams(&api_corev1.PodExecOptions{
+			Container: "busybox", // busybox container name
+			Command:   cmd,
+			Stdin:     false,
+			Stdout:    true,
+			Stderr:    true,
+			TTY:       false,
+		}, scheme.ParameterCodec)
+
+	// Create the executor
+	executor, err := remotecommand.NewSPDYExecutor(m.restConfig, "POST", req.URL())
+	if err != nil {
+		return fmt.Errorf("failed to create executor: %v", err)
+	}
+
+	// Capture stdout and stderr
+	var stdoutBuf, stderrBuf bytes.Buffer
+
+	// Execute the command with a timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	execDone := make(chan error, 1)
+	go func() {
+		err := executor.Stream(remotecommand.StreamOptions{
+			Stdout: &stdoutBuf,
+			Stderr: &stderrBuf,
+		})
+		execDone <- err
+	}()
+
+	select {
+	case err := <-execDone:
+		if err != nil {
+			// Check if it's a non-zero exit code
+			if exitErr, ok := err.(exec.CodeExitError); ok {
+				return fmt.Errorf("nslookup failed with exit code %d: stdout=%s stderr=%s",
+					exitErr.ExitStatus(), stdoutBuf.String(), stderrBuf.String())
+			}
+			return fmt.Errorf("exec error: %v, stderr=%s", err, stderrBuf.String())
+		}
+
+		// Command succeeded
+		klog.V(5).Infof("nslookup output for pod %s: %s", podName, stdoutBuf.String())
+		return nil
+
+	case <-ctx.Done():
+		return fmt.Errorf("nslookup command timed out after 10 seconds")
+	}
 }
 
 func (m *ConnectivitySoakMeasurement) gather() ([]measurement.Summary, error) {
@@ -828,7 +1056,18 @@ func (m *ConnectivitySoakMeasurement) restart() ([]measurement.Summary, error) {
 }
 
 func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
-	klog.Infof("Cleaning up DNS infrastructure (NodeLocalDNS, LocalRedirectPolicy, and DNS CCNP)")
+	klog.Infof("Cleaning up DNS infrastructure (NodeLocalDNS, LocalRedirectPolicy, busybox DaemonSet, and DNS CCNP)")
+
+	// First stop the continuous DNS testing
+	klog.Infof("Stopping continuous DNS testing...")
+	select {
+	case <-m.dnsTestStopChan:
+		// Channel already closed
+	default:
+		close(m.dnsTestStopChan)
+	}
+	m.dnsTestWg.Wait()
+	klog.Infof("DNS testing stopped")
 
 	dynamicClient := m.framework.GetDynamicClients().GetClient()
 
@@ -839,14 +1078,21 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 		klog.Infof("Successfully deleted NodeLocalDNS DaemonSet")
 	}
 
+	// Delete busybox DaemonSet
+	if err := m.k8sClient.AppsV1().DaemonSets("kube-system").Delete(context.TODO(), "busybox-daemonset", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete busybox DaemonSet: %v", err)
+	} else {
+		klog.Infof("Successfully deleted busybox DaemonSet")
+	}
+
 	// Then delete LocalRedirectPolicy (stop redirecting to non-existent pods)
 	lrpGVR := schema.GroupVersionResource{
 		Group:    "cilium.io",
 		Version:  "v2",
-		Resource: "localredirectpolicies",
+		Resource: "ciliumlocalredirectpolicies",
 	}
 
-	if err := dynamicClient.Resource(lrpGVR).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+	if err := dynamicClient.Resource(lrpGVR).Namespace("kube-system").Delete(context.TODO(), "nodelocaldns-cache-redirect", metav1.DeleteOptions{}); err != nil {
 		klog.Errorf("failed to delete LocalRedirectPolicy: %v", err)
 	} else {
 		klog.Infof("Successfully deleted LocalRedirectPolicy")
@@ -855,6 +1101,32 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 	// Wait for LRP to be fully deleted
 	if err := m.waitForResourcesDeleted(dynamicClient, lrpGVR, ""); err != nil {
 		klog.Errorf("failed to wait for LocalRedirectPolicy to be deleted: %v", err)
+	}
+
+	// Clean up remaining NodeLocalDNS resources
+	// Delete NodeLocalDNS ConfigMap
+	if err := m.k8sClient.CoreV1().ConfigMaps("kube-system").Delete(context.TODO(), "node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS ConfigMap: %v", err)
+	}
+
+	// Delete NodeLocalDNS ServiceAccount
+	if err := m.k8sClient.CoreV1().ServiceAccounts("kube-system").Delete(context.TODO(), "node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS ServiceAccount: %v", err)
+	}
+
+	// Delete NodeLocalDNS Service
+	if err := m.k8sClient.CoreV1().Services("kube-system").Delete(context.TODO(), "kube-dns-upstream", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS Service: %v", err)
+	}
+
+	// Delete NodeLocalDNS ClusterRole
+	if err := m.k8sClient.RbacV1().ClusterRoles().Delete(context.TODO(), "system:node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS ClusterRole: %v", err)
+	}
+
+	// Delete NodeLocalDNS ClusterRoleBinding
+	if err := m.k8sClient.RbacV1().ClusterRoleBindings().Delete(context.TODO(), "system:node-local-dns", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete NodeLocalDNS ClusterRoleBinding: %v", err)
 	}
 
 	// Finally delete DNS CCNP (allow fallback to regular kube-dns)
@@ -871,28 +1143,7 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 		klog.Infof("Successfully deleted DNS CCNP")
 	}
 
-	// Clean up remaining NodeLocalDNS resources
-	// Delete NodeLocalDNS ConfigMap
-	if err := m.k8sClient.CoreV1().ConfigMaps("kube-system").Delete(context.TODO(), "node-local-dns", metav1.DeleteOptions{}); err != nil {
-		klog.Errorf("failed to delete NodeLocalDNS ConfigMap: %v", err)
-	}
-
-	// Delete NodeLocalDNS ServiceAccount
-	if err := m.k8sClient.CoreV1().ServiceAccounts("kube-system").Delete(context.TODO(), "node-local-dns", metav1.DeleteOptions{}); err != nil {
-		klog.Errorf("failed to delete NodeLocalDNS ServiceAccount: %v", err)
-	}
-
-	// Delete NodeLocalDNS ClusterRole
-	if err := m.k8sClient.RbacV1().ClusterRoles().Delete(context.TODO(), "system:node-local-dns", metav1.DeleteOptions{}); err != nil {
-		klog.Errorf("failed to delete NodeLocalDNS ClusterRole: %v", err)
-	}
-
-	// Delete NodeLocalDNS ClusterRoleBinding
-	if err := m.k8sClient.RbacV1().ClusterRoleBindings().Delete(context.TODO(), "system:node-local-dns", metav1.DeleteOptions{}); err != nil {
-		klog.Errorf("failed to delete NodeLocalDNS ClusterRoleBinding: %v", err)
-	}
-
-	klog.Infof("DNS infrastructure cleanup completed")
+	klog.Infof("DNS infrastructure and busybox DaemonSet cleanup completed")
 	return nil
 }
 

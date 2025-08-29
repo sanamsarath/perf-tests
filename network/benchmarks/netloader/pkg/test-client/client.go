@@ -192,7 +192,7 @@ func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, serviceChan
 			for _, dPort := range destPorts {
 				// url using service DNS name (forces DNS resolution)
 				url := "http://" + serviceDNS + ":" + dPort + c.destPath
-
+				klog.Infof("Making HTTP request to %s", url)
 				// start time
 				start := time.Now()
 
@@ -223,6 +223,7 @@ func (c *TestClient) worker(wg *sync.WaitGroup, ctx context.Context, serviceChan
 				}
 
 				// Inc total and success counters
+				klog.Info("Request made")
 				c.HttpMetrics.requestsTotal.WithLabelValues("total", dPort).Inc()
 				c.HttpMetrics.requestsSuccess.WithLabelValues("success", dPort).Inc()
 				resp.Body.Close()

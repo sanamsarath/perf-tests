@@ -1,8 +1,12 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{.Name}}-cr
+  name: {{.Name}}
 rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list", "watch"]
+# Allow listing services for service discovery
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["list", "get"]
