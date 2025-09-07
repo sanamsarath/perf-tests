@@ -24,6 +24,8 @@ spec:
       priorityClassName: system-node-critical
       serviceAccountName: node-local-dns
       dnsPolicy: Default  # Don't use cluster DNS.
+      nodeSelector:
+        slo: "true"
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"

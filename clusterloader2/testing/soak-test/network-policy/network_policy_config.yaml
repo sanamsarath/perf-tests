@@ -11,6 +11,7 @@
 {{$L3_L4_PORT := DefaultParam .CL2_L3_L4_PORT false}}
 {{$RESTART_DELETION_ENABLED := DefaultParam .CL2_RESTART_DELETION_ENABLED false}}
 {{$CLIENT_POD_MONITOR := DefaultParam .CL2_CLIENT_POD_MONITOR false}}
+{{$NODE_LOCAL_DNS_MONITOR := DefaultParam .CL2_NODE_LOCAL_DNS_MONITOR false}}
 {{$SOAK_TEST := DefaultParam .CL2_SOAK_TEST false}}
 namespace:
   number: {{$NUMBER_OF_GROUPS}}
@@ -204,6 +205,21 @@ steps:
         query: sum(increase(cilium_policy_l7_total{proxy_type="envoy", rule="forwarded"}[%v:]))
       - name: cilium_l7_failed
         query: sum(increase(cilium_policy_l7_total{proxy_type="envoy", rule!~"received|forwarded"}[%v:]))  
+- name: Starting NodeLocalDNS metrics collection
+  measurements:
+  - Identifier: NodeLocalDNSMetrics
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: "nodelocaldns_coredns_metrics"
+      metricVersion: v1
+      unit: count
+      dimensions:
+      - zone
+      - instance
+      queries:
+        - name: dns_requests_total_by_zone_and_instance
+          query: sum(increase(coredns_dns_request_count_total[%v:])) by (zone, instance)
 # 2. start cilium envoy metrics
 - name: Starting cilium envoy metrics for http load test
   measurements:
@@ -249,7 +265,7 @@ steps:
       targetPort2: {{$TARGET_PORT2}}
       l7Enabled: {{$NET_POLICY_L7_ENABLED}}
       l3l4port: {{$L3_L4_PORT}}
-      enableNetworkPolicy: false
+      enableNetworkPolicy: true
       resourceGatheringEnabled: false
       targetPath: /
       testDuration: "{{$DURATION}}"
@@ -337,6 +353,13 @@ steps:
         action: gather
         enableViolations: true
     - Identifier: CiliumAgentL7Policy
+      Method: GenericPrometheusQuery
+      Params:
+        action: gather
+        enableViolations: true
+- name: NodeLocalDNS Metrics
+  measurements:
+    - Identifier: NodeLocalDNSMetrics
       Method: GenericPrometheusQuery
       Params:
         action: gather

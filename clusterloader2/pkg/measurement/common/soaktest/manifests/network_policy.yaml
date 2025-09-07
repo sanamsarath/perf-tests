@@ -43,10 +43,12 @@ spec:
     - matchLabels:
         {{ (StructuralData .TargetLabelKey)}}: {{.TargetLabelValue}}
         k8s:io.kubernetes.pod.namespace: {{.TargetNamespace}}  
+{{if .L3L4Port}}
     toPorts:
     - ports: 
       - port: "{{.TargetPort}}"
         protocol: TCP
+{{end}}
 {{if .L7Enabled}}
       rules:
         http:

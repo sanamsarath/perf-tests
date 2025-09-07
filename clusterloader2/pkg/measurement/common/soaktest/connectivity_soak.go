@@ -154,27 +154,30 @@ func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measu
 			return nil, err
 		}
 
-		// deploy DNS CCNP to allow client pods DNS access
-		if err := m.deployDNSCCNP(); err != nil {
-			return nil, err
-		}
+		// // Deploy busybox DaemonSet (1 pod per node)
+		// if err := m.framework.ApplyTemplatedManifests(manifestsFS, busyboxDaemonSetFilePath, templateMap); err != nil {
+		// 	return fmt.Errorf("phase: start, %s: failed to apply busybox DaemonSet manifest: %v", m.String(), err)
+		// }
 
-		// Wait for busybox pods to come up and test DNS resolution
-		if err := m.waitForBusyboxPodsAndTestDNS(); err != nil {
-			return nil, err
-		}
+		
+		// // Wait for busybox pods to come up and test DNS resolution
+		// if err := m.waitForBusyboxPodsAndTestDNS(); err != nil {
+		// 	return nil, err
+		// }
 
 		//deploy target pods
 		if err := m.deployTargetPods("start"); err != nil {
 			return nil, err
 		}
 
-		if m.enableNetworkPolicy {
-			// deploy the network policy to allow traffic from client to API server only in start phase
-			if err := m.deployAPIServerNetworkPolicy(); err != nil {
-				return nil, err
-			}
-		}
+		// if m.enableNetworkPolicy {
+		// 	// deploy DNS CCNP to allow client pods DNS access
+		// 	if err := m.deployDNSCCNP(); err != nil {
+		// 			return nil, err
+		// 	}
+
+		// }
+
 	}
 
 	if m.enableNetworkPolicy {
@@ -361,12 +364,8 @@ func (m *ConnectivitySoakMeasurement) deployNodeLocalDNSAndLRP() error {
 		return fmt.Errorf("phase: start, %s: failed to apply LocalRedirectPolicy manifest: %v", m.String(), err)
 	}
 
-	// Deploy busybox DaemonSet (1 pod per node)
-	if err := m.framework.ApplyTemplatedManifests(manifestsFS, busyboxDaemonSetFilePath, templateMap); err != nil {
-		return fmt.Errorf("phase: start, %s: failed to apply busybox DaemonSet manifest: %v", m.String(), err)
-	}
 
-	klog.Infof("Successfully deployed NodeLocalDNS DaemonSet, LocalRedirectPolicy, and busybox DaemonSet")
+	klog.Infof("Successfully deployed NodeLocalDNS DaemonSet, LocalRedirectPolicy")
 	return nil
 }
 
@@ -1056,18 +1055,18 @@ func (m *ConnectivitySoakMeasurement) restart() ([]measurement.Summary, error) {
 }
 
 func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
-	klog.Infof("Cleaning up DNS infrastructure (NodeLocalDNS, LocalRedirectPolicy, busybox DaemonSet, and DNS CCNP)")
+	klog.Infof("Cleaning up DNS infrastructure (NodeLocalDNS, LocalRedirectPolicy, and DNS CCNP)")
 
-	// First stop the continuous DNS testing
-	klog.Infof("Stopping continuous DNS testing...")
-	select {
-	case <-m.dnsTestStopChan:
-		// Channel already closed
-	default:
-		close(m.dnsTestStopChan)
-	}
-	m.dnsTestWg.Wait()
-	klog.Infof("DNS testing stopped")
+	// // First stop the continuous DNS testing
+	// klog.Infof("Stopping continuous DNS testing...")
+	// select {
+	// case <-m.dnsTestStopChan:
+	// 	// Channel already closed
+	// default:
+	// 	close(m.dnsTestStopChan)
+	// }
+	// m.dnsTestWg.Wait()
+	// klog.Infof("DNS testing stopped")
 
 	dynamicClient := m.framework.GetDynamicClients().GetClient()
 
@@ -1078,12 +1077,12 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 		klog.Infof("Successfully deleted NodeLocalDNS DaemonSet")
 	}
 
-	// Delete busybox DaemonSet
-	if err := m.k8sClient.AppsV1().DaemonSets("kube-system").Delete(context.TODO(), "busybox-daemonset", metav1.DeleteOptions{}); err != nil {
-		klog.Errorf("failed to delete busybox DaemonSet: %v", err)
-	} else {
-		klog.Infof("Successfully deleted busybox DaemonSet")
-	}
+	// // Delete busybox DaemonSet
+	// if err := m.k8sClient.AppsV1().DaemonSets("kube-system").Delete(context.TODO(), "busybox-daemonset", metav1.DeleteOptions{}); err != nil {
+	// 	klog.Errorf("failed to delete busybox DaemonSet: %v", err)
+	// } else {
+	// 	klog.Infof("Successfully deleted busybox DaemonSet")
+	// }
 
 	// Then delete LocalRedirectPolicy (stop redirecting to non-existent pods)
 	lrpGVR := schema.GroupVersionResource{
@@ -1143,7 +1142,7 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 		klog.Infof("Successfully deleted DNS CCNP")
 	}
 
-	klog.Infof("DNS infrastructure and busybox DaemonSet cleanup completed")
+	klog.Infof("DNS infrastructure cleanup completed")
 	return nil
 }
 

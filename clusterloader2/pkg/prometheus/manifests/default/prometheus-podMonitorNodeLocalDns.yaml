@@ -1,0 +1,23 @@
+{{$NODE_LOCAL_DNS_MONITOR := DefaultParam .CL2_NODE_LOCAL_DNS_MONITOR false}}
+
+{{if $NODE_LOCAL_DNS_MONITOR}}
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: nodelocaldns-pods
+  namespace: monitoring
+  labels:
+    k8s-app: node-local-dns
+spec:
+  selector:
+    matchLabels:
+      k8s-app: node-local-dns
+  podMetricsEndpoints:
+  - port: metrics
+    interval: 120s
+  namespaceSelector:
+    matchNames:
+    - kube-system
+
+{{end}}
