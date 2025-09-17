@@ -30,6 +30,14 @@ steps:
 # 7. gather cilium envoy metrics
 # 8. gather cilium agent metrics & client metrics
 # 1. start cilium agent metrics
+- name: PodStartupLatency Metrics
+  measurements:
+    - Identifier: PodStartupLatency
+      Method: PodStartupLatency
+      Params:
+        action: start
+        labelSelector: group = service-discovery
+        threshold: 15s
 - name: APIServer Metrics
   measurements:
   - Identifier: ApiserverAvgCPUUsage
@@ -271,26 +279,26 @@ steps:
       testDuration: "{{$DURATION}}"
       workerPerClient: {{$WORKERS_PER_CLIENT}}
       npType: {{$Network_Policy_Type}}
-# {{if $RESTART_DELETION_ENABLED}}
-# - name: Connectivity Soak Test - RestartPods
-#   measurements:
-#   - Identifier: ConnectivitySoakMeasurement
-#     Method: ConnectivitySoakMeasurement
-#     Params:
-#       action: restart
-# - name: Connectivity Soak Test - Delete Pods
-#   measurements:
-#   - Identifier: ConnectivitySoakMeasurement
-#     Method: ConnectivitySoakMeasurement
-#     Params:
-#       action: delete-pods
-# - name: Network Policy Soak Test - Delete CNPs
-#   measurements:
-#   - Identifier: ConnectivitySoakMeasurement
-#     Method: ConnectivitySoakMeasurement
-#     Params:
-#       action: delete-ccnps-cnps
-# {{end}}
+{{if $RESTART_DELETION_ENABLED}}
+- name: Connectivity Soak Test - RestartPods
+  measurements:
+  - Identifier: ConnectivitySoakMeasurement
+    Method: ConnectivitySoakMeasurement
+    Params:
+      action: restart
+- name: Connectivity Soak Test - Delete Pods
+  measurements:
+  - Identifier: ConnectivitySoakMeasurement
+    Method: ConnectivitySoakMeasurement
+    Params:
+      action: delete-pods
+- name: Network Policy Soak Test - Delete CNPs
+  measurements:
+  - Identifier: ConnectivitySoakMeasurement
+    Method: ConnectivitySoakMeasurement
+    Params:
+      action: delete-ccnps-cnps
+{{end}}
 {{end}}
 # 5. gather network performance measurement (wait and gather results)
 - name: Connectivity Soak Test - Gather Results
@@ -307,6 +315,13 @@ steps:
     Params:
       action: gather
       enableViolations: true
+- name: PodStartupLatency Metrics
+  measurements:
+    - Identifier: PodStartupLatency
+      Method: PodStartupLatency
+      Params:
+        action: gather
+        enableViolations: true
 - name: APIServer Metrics
   measurements:
     - Identifier: ApiserverAvgCPUUsage

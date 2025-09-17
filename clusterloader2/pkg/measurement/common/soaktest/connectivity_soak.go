@@ -170,13 +170,13 @@ func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measu
 			return nil, err
 		}
 
-		// if m.enableNetworkPolicy {
-		// 	// deploy DNS CCNP to allow client pods DNS access
-		// 	if err := m.deployDNSCCNP(); err != nil {
-		// 			return nil, err
-		// 	}
+		if m.enableNetworkPolicy {
+			// deploy DNS CCNP to allow client pods DNS access
+			if err := m.deployDNSCCNP(); err != nil {
+					return nil, err
+			}
 
-		// }
+		}
 
 	}
 
