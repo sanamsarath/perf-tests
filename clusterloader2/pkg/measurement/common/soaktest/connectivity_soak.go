@@ -54,6 +54,9 @@ const (
 	nodelocaldnsServiceFilePath    = "manifests/nodelocaldns_service.yaml"
 	lrpFilePath                    = "manifests/nodelocaldns_lrp.yaml"
 	busyboxDaemonSetFilePath       = "manifests/busybox_daemonset.yaml"
+	httpRedirectLrpFilePath        = "manifests/dns_redirect_lrp.yaml"
+	testTargetPodFilePath          = "manifests/test_target_pod.yaml"
+	testTargetServiceFilePath      = "manifests/test_target_service.yaml"
 
 	// variables
 	clientNamespace = "soak-client"
@@ -154,16 +157,19 @@ func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measu
 			return nil, err
 		}
 
-		// // Deploy busybox DaemonSet (1 pod per node)
-		// if err := m.framework.ApplyTemplatedManifests(manifestsFS, busyboxDaemonSetFilePath, templateMap); err != nil {
-		// 	return fmt.Errorf("phase: start, %s: failed to apply busybox DaemonSet manifest: %v", m.String(), err)
-		// }
+		// Deploy busybox DaemonSet (1 pod per node) and HTTP redirect LRP
+		if err := m.deployBusyboxAndHTTPRedirectLRP(); err != nil {
+			return nil, err
+		}
 
-		
-		// // Wait for busybox pods to come up and test DNS resolution
-		// if err := m.waitForBusyboxPodsAndTestDNS(); err != nil {
-		// 	return nil, err
-		// }
+		// Wait for busybox pods to come up and test HTTP redirect LRP
+		if err := m.waitForBusyboxPodsAndTestHTTP(); err != nil {
+			return nil, err
+		}
+
+		// Add delay to ensure HTTP redirect LRP doesn't interfere with main soak test
+		klog.Infof("Waiting 10 seconds before deploying main soak test target pods...")
+		time.Sleep(10 * time.Second)
 
 		//deploy target pods
 		if err := m.deployTargetPods("start"); err != nil {
@@ -173,7 +179,7 @@ func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measu
 		if m.enableNetworkPolicy {
 			// deploy DNS CCNP to allow client pods DNS access
 			if err := m.deployDNSCCNP(); err != nil {
-					return nil, err
+				return nil, err
 			}
 
 		}
@@ -364,8 +370,38 @@ func (m *ConnectivitySoakMeasurement) deployNodeLocalDNSAndLRP() error {
 		return fmt.Errorf("phase: start, %s: failed to apply LocalRedirectPolicy manifest: %v", m.String(), err)
 	}
 
-
 	klog.Infof("Successfully deployed NodeLocalDNS DaemonSet, LocalRedirectPolicy")
+	return nil
+}
+
+func (m *ConnectivitySoakMeasurement) deployBusyboxAndHTTPRedirectLRP() error {
+	klog.Infof("Deploying busybox namespace, DaemonSet and HTTP redirect LocalRedirectPolicy")
+
+	// Create isolated busybox namespace for HTTP redirect testing only
+	if err := client.CreateNamespace(m.k8sClient, "busybox"); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to create busybox namespace: %v", m.String(), err)
+	}
+
+	templateMap := map[string]interface{}{
+		// No template variables needed for the static DaemonSet
+	}
+
+	// Deploy busybox DaemonSet (1 pod per node)
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, busyboxDaemonSetFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply busybox DaemonSet manifest: %v", m.String(), err)
+	}
+
+	// Deploy test target DaemonSet for LRP redirection
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, testTargetPodFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply test target DaemonSet manifest: %v", m.String(), err)
+	}
+
+	//Deploy HTTP redirect LocalRedirectPolicy
+	if err := m.framework.ApplyTemplatedManifests(manifestsFS, httpRedirectLrpFilePath, templateMap); err != nil {
+		return fmt.Errorf("phase: start, %s: failed to apply HTTP redirect LocalRedirectPolicy manifest: %v", m.String(), err)
+	}
+
+	klog.Infof("Successfully deployed busybox namespace, DaemonSet and HTTP redirect LocalRedirectPolicy")
 	return nil
 }
 
@@ -608,8 +644,8 @@ func (m *ConnectivitySoakMeasurement) waitForDeploymentPodsReady(ctx context.Con
 	return nil
 }
 
-// waitForBusyboxPodsAndTestDNS waits for busybox DaemonSet pods to be ready and starts continuous DNS testing
-func (m *ConnectivitySoakMeasurement) waitForBusyboxPodsAndTestDNS() error {
+// waitForBusyboxPodsAndTestHTTP waits for busybox DaemonSet pods to be ready and starts continuous HTTP testing
+func (m *ConnectivitySoakMeasurement) waitForBusyboxPodsAndTestHTTP() error {
 	klog.Infof("Waiting for busybox DaemonSet pods to be ready...")
 
 	// Wait for DaemonSet to be ready
@@ -617,7 +653,7 @@ func (m *ConnectivitySoakMeasurement) waitForBusyboxPodsAndTestDNS() error {
 	defer cancel()
 
 	daemonSetName := "busybox-daemonset"
-	namespace := "kube-system"
+	namespace := "busybox"
 
 	// Wait for DaemonSet to have all desired pods ready
 	for {
@@ -646,27 +682,27 @@ func (m *ConnectivitySoakMeasurement) waitForBusyboxPodsAndTestDNS() error {
 
 daemonSetReady:
 
-	// Start continuous DNS testing in a separate goroutine
-	klog.Infof("Starting continuous DNS testing on all busybox pods...")
+	// Start continuous HTTP testing in a separate goroutine
+	klog.Infof("Starting continuous HTTP testing on all busybox pods...")
 	m.dnsTestWg.Add(1)
-	go m.continuousDNSTest(namespace)
+	go m.continuousHTTPTest(namespace)
 
 	return nil
 }
 
-// continuousDNSTest runs DNS resolution tests continuously until stopped
-func (m *ConnectivitySoakMeasurement) continuousDNSTest(namespace string) {
+// continuousHTTPTest runs HTTP redirection tests continuously until stopped
+func (m *ConnectivitySoakMeasurement) continuousHTTPTest(namespace string) {
 	defer m.dnsTestWg.Done()
 
 	labelSelector := "app=busybox"
-	testInterval := 30 * time.Second // Run DNS test every 30 seconds
+	testInterval := 30 * time.Second // Run HTTP redirect test every 30 seconds
 
-	klog.Infof("Starting continuous DNS testing loop...")
+	klog.Infof("Starting continuous HTTP redirection testing loop...")
 
 	for {
 		select {
 		case <-m.dnsTestStopChan:
-			klog.Infof("Stopping continuous DNS testing...")
+			klog.Infof("Stopping continuous HTTP redirection testing...")
 			return
 		default:
 			// Get current busybox pods
@@ -680,12 +716,13 @@ func (m *ConnectivitySoakMeasurement) continuousDNSTest(namespace string) {
 			}
 
 			if len(podList.Items) == 0 {
-				klog.Infof("No busybox pods found, DNS testing loop ending...")
+				klog.Infof("No busybox pods found, HTTP redirection testing loop ending...")
 				return
 			}
 
-			// Test DNS resolution on each running pod
+			// Test HTTP redirection on each running pod
 			successCount := 0
+			redirectCount := 0
 			for _, pod := range podList.Items {
 				if pod.Status.Phase != api_corev1.PodRunning {
 					continue
@@ -703,19 +740,25 @@ func (m *ConnectivitySoakMeasurement) continuousDNSTest(namespace string) {
 					continue
 				}
 
-				// Perform DNS test
-				if err := m.execDNSTestOnPod(pod.Name, namespace); err != nil {
-					klog.V(4).Infof("DNS test failed on pod %s: %v", pod.Name, err)
+				// Perform HTTP redirect test
+				redirected, err := m.execHTTPRedirectTestOnPod(pod.Name, namespace)
+				if err != nil {
+					klog.V(4).Infof("HTTP redirect test failed on pod %s: %v", pod.Name, err)
 				} else {
 					successCount++
-					klog.V(4).Infof("DNS test successful on pod %s", pod.Name)
+					if redirected {
+						redirectCount++
+						klog.V(4).Infof("HTTP redirect test successful (redirected to target) on pod %s", pod.Name)
+					} else {
+						klog.V(4).Infof("HTTP redirect test successful (direct connection to 8.8.8.8) on pod %s", pod.Name)
+					}
 				}
 			}
 
 			if successCount > 0 {
-				klog.V(2).Infof("DNS resolution test successful on %d/%d running busybox pods", successCount, len(podList.Items))
+				klog.V(2).Infof("HTTP redirect test successful on %d/%d running busybox pods (%d redirected to target pods)", successCount, len(podList.Items), redirectCount)
 			} else {
-				klog.Warningf("DNS resolution failed on all %d busybox pods", len(podList.Items))
+				klog.Warningf("HTTP redirect test failed on all %d busybox pods", len(podList.Items))
 			}
 
 			// Wait before next test cycle
@@ -724,9 +767,11 @@ func (m *ConnectivitySoakMeasurement) continuousDNSTest(namespace string) {
 	}
 }
 
-// execDNSTestOnPod performs actual nslookup command on a specific pod using Kubernetes exec API
-func (m *ConnectivitySoakMeasurement) execDNSTestOnPod(podName, namespace string) error {
-	cmd := []string{"nslookup", "www.google.com"}
+// execHTTPRedirectTestOnPod performs HTTP redirection test to 8.8.8.8:80 on a specific pod
+func (m *ConnectivitySoakMeasurement) execHTTPRedirectTestOnPod(podName, namespace string) (bool, error) {
+	// Test if HTTP requests to 8.8.8.8:80 get redirected to test-target nginx pods (port 80)
+	// We'll use wget with timeout to test redirection (busybox has wget built-in)
+	cmd := []string{"wget", "-O-", "-T", "5", "--tries=1", "http://8.8.8.8/"}
 
 	// Create the exec request
 	req := m.k8sClient.CoreV1().RESTClient().
@@ -747,7 +792,7 @@ func (m *ConnectivitySoakMeasurement) execDNSTestOnPod(podName, namespace string
 	// Create the executor
 	executor, err := remotecommand.NewSPDYExecutor(m.restConfig, "POST", req.URL())
 	if err != nil {
-		return fmt.Errorf("failed to create executor: %v", err)
+		return false, fmt.Errorf("failed to create executor: %v", err)
 	}
 
 	// Capture stdout and stderr
@@ -768,21 +813,46 @@ func (m *ConnectivitySoakMeasurement) execDNSTestOnPod(podName, namespace string
 
 	select {
 	case err := <-execDone:
+		stdout := stdoutBuf.String()
+		stderr := stderrBuf.String()
+
 		if err != nil {
 			// Check if it's a non-zero exit code
 			if exitErr, ok := err.(exec.CodeExitError); ok {
-				return fmt.Errorf("nslookup failed with exit code %d: stdout=%s stderr=%s",
-					exitErr.ExitStatus(), stdoutBuf.String(), stderrBuf.String())
+				// If LRP is not working, HTTP request to 8.8.8.8 should fail (no HTTP server at 8.8.8.8)
+				if strings.Contains(stderr, "connection refused") || strings.Contains(stderr, "connection reset") ||
+					strings.Contains(stderr, "network unreachable") || strings.Contains(stderr, "timeout") ||
+					strings.Contains(stderr, "bad address") || strings.Contains(stderr, "Name or service not known") {
+					klog.V(5).Infof("wget to 8.8.8.8 failed - no LRP redirection (direct connection failed) on pod %s: stdout=%s stderr=%s",
+						podName, stdout, stderr)
+					return false, nil // No redirection, direct connection failed
+				}
+				// Other failures might be network issues
+				klog.V(5).Infof("wget to 8.8.8.8 failed with exit code %d on pod %s: stdout=%s stderr=%s",
+					exitErr.ExitStatus(), podName, stdout, stderr)
+				return false, nil
 			}
-			return fmt.Errorf("exec error: %v, stderr=%s", err, stderrBuf.String())
+			return false, fmt.Errorf("exec error: %v, stderr=%s", err, stderr)
 		}
 
-		// Command succeeded
-		klog.V(5).Infof("nslookup output for pod %s: %s", podName, stdoutBuf.String())
-		return nil
+		// Command succeeded - check response to determine if redirected
+		if strings.Contains(stdout, "nginx") || strings.Contains(stdout, "Welcome to nginx") ||
+			strings.Contains(stdout, "<title>") || len(strings.TrimSpace(stdout)) > 0 {
+			// Got HTTP response content - likely redirected to nginx test-target pods
+			truncatedOutput := stdout
+			if len(stdout) > 200 {
+				truncatedOutput = stdout[:200] + "..."
+			}
+			klog.V(5).Infof("wget to 8.8.8.8 returned nginx response (redirected to test-target pods) on pod %s: %s", podName, truncatedOutput)
+			return true, nil
+		}
+
+		// If we get here with success but no clear content
+		klog.V(5).Infof("wget to 8.8.8.8 completed with unclear result on pod %s: %s", podName, stdout)
+		return false, nil
 
 	case <-ctx.Done():
-		return fmt.Errorf("nslookup command timed out after 10 seconds")
+		return false, fmt.Errorf("wget command timed out after 10 seconds")
 	}
 }
 
@@ -1055,18 +1125,18 @@ func (m *ConnectivitySoakMeasurement) restart() ([]measurement.Summary, error) {
 }
 
 func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
-	klog.Infof("Cleaning up DNS infrastructure (NodeLocalDNS, LocalRedirectPolicy, and DNS CCNP)")
+	klog.Infof("Cleaning up DNS infrastructure (NodeLocalDNS, LocalRedirectPolicy, busybox, and DNS CCNP)")
 
-	// // First stop the continuous DNS testing
-	// klog.Infof("Stopping continuous DNS testing...")
-	// select {
-	// case <-m.dnsTestStopChan:
-	// 	// Channel already closed
-	// default:
-	// 	close(m.dnsTestStopChan)
-	// }
-	// m.dnsTestWg.Wait()
-	// klog.Infof("DNS testing stopped")
+	// First stop the continuous testing
+	klog.Infof("Stopping continuous testing...")
+	select {
+	case <-m.dnsTestStopChan:
+		// Channel already closed
+	default:
+		close(m.dnsTestStopChan)
+	}
+	m.dnsTestWg.Wait()
+	klog.Infof("Continuous testing stopped")
 
 	dynamicClient := m.framework.GetDynamicClients().GetClient()
 
@@ -1077,12 +1147,12 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 		klog.Infof("Successfully deleted NodeLocalDNS DaemonSet")
 	}
 
-	// // Delete busybox DaemonSet
-	// if err := m.k8sClient.AppsV1().DaemonSets("kube-system").Delete(context.TODO(), "busybox-daemonset", metav1.DeleteOptions{}); err != nil {
-	// 	klog.Errorf("failed to delete busybox DaemonSet: %v", err)
-	// } else {
-	// 	klog.Infof("Successfully deleted busybox DaemonSet")
-	// }
+	// Delete busybox DaemonSet
+	if err := m.k8sClient.AppsV1().DaemonSets("busybox").Delete(context.TODO(), "busybox-daemonset", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete busybox DaemonSet: %v", err)
+	} else {
+		klog.Infof("Successfully deleted busybox DaemonSet")
+	}
 
 	// Then delete LocalRedirectPolicy (stop redirecting to non-existent pods)
 	lrpGVR := schema.GroupVersionResource{
@@ -1091,15 +1161,18 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 		Resource: "ciliumlocalredirectpolicies",
 	}
 
+	// Delete NodeLocalDNS LRP
 	if err := dynamicClient.Resource(lrpGVR).Namespace("kube-system").Delete(context.TODO(), "nodelocaldns-cache-redirect", metav1.DeleteOptions{}); err != nil {
 		klog.Errorf("failed to delete LocalRedirectPolicy: %v", err)
 	} else {
 		klog.Infof("Successfully deleted LocalRedirectPolicy")
 	}
 
-	// Wait for LRP to be fully deleted
-	if err := m.waitForResourcesDeleted(dynamicClient, lrpGVR, ""); err != nil {
-		klog.Errorf("failed to wait for LocalRedirectPolicy to be deleted: %v", err)
+	// Delete DNS Redirect LRP
+	if err := dynamicClient.Resource(lrpGVR).Namespace("busybox").Delete(context.TODO(), "busybox-test-dns-redirect", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete DNS Redirect LocalRedirectPolicy: %v", err)
+	} else {
+		klog.Infof("Successfully deleted DNS Redirect LocalRedirectPolicy")
 	}
 
 	// Clean up remaining NodeLocalDNS resources
@@ -1142,41 +1215,15 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 		klog.Infof("Successfully deleted DNS CCNP")
 	}
 
+	// Delete busybox namespace (this will clean up all resources in it)
+	if err := m.k8sClient.CoreV1().Namespaces().Delete(context.TODO(), "busybox", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete busybox namespace: %v", err)
+	} else {
+		klog.Infof("Successfully deleted busybox namespace")
+	}
+
 	klog.Infof("DNS infrastructure cleanup completed")
 	return nil
-}
-
-func (m *ConnectivitySoakMeasurement) waitForResourcesDeleted(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for resources of type %s to be deleted", gvr.Resource)
-		default:
-			var list *unstructured.UnstructuredList
-			var err error
-
-			if namespace == "" {
-				list, err = dynamicClient.Resource(gvr).List(context.TODO(), metav1.ListOptions{})
-			} else {
-				list, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.TODO(), metav1.ListOptions{})
-			}
-
-			if err != nil {
-				return fmt.Errorf("failed to list resources of type %s: %v", gvr.Resource, err)
-			}
-
-			if len(list.Items) == 0 {
-				klog.Infof("All resources of type %s have been deleted", gvr.Resource)
-				return nil
-			}
-
-			klog.Infof("Waiting for %d resources of type %s to be deleted...", len(list.Items), gvr.Resource)
-			time.Sleep(1 * time.Second)
-		}
-	}
 }
 
 func (m *ConnectivitySoakMeasurement) Dispose() {

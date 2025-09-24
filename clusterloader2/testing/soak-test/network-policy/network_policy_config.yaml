@@ -32,12 +32,12 @@ steps:
 # 1. start cilium agent metrics
 - name: PodStartupLatency Metrics
   measurements:
-    - Identifier: PodStartupLatency
-      Method: PodStartupLatency
-      Params:
-        action: start
-        labelSelector: group = service-discovery
-        threshold: 15s
+  - Identifier: PodStartupLatency
+    Method: PodStartupLatency
+    Params:
+      action: start
+      labelSelector: group = service-discovery
+      threshold: 15s
 - name: APIServer Metrics
   measurements:
   - Identifier: APIResponsivenessPrometheus
@@ -108,30 +108,30 @@ steps:
         query: quantile(0.5, max_over_time(process_resident_memory_bytes{endpoint="apiserver"}[%v:]) / 1024 / 1024)
 - name: CiliumBPFMapPressure Metrics
   measurements:
-    - Identifier: MaxCiliumBPFMapPressure
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Max Cilium BPF Map Pressure
-        metricVersion: v1
-        unit: ratio
-        dimensions:
-        - map_name
-        enableViolations: true
-        queries:
-        - name: max bpf map pressure over time
-          query: max(max_over_time(cilium_bpf_map_pressure[%v:])) by (map_name)
-    - Identifier: MaxCiliumPoliciesLoadedCount
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Max number of Cilium Policies Loaded
-        metricVersion: v1
-        unit: policies
-        enableViolations: true
-        queries:
-        - name: max number of cilium policies loaded over time
-          query: max(max_over_time(cilium_policy[%v:]))
+  - Identifier: MaxCiliumBPFMapPressure
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Max Cilium BPF Map Pressure
+      metricVersion: v1
+      unit: ratio
+      dimensions:
+      - map_name
+      enableViolations: true
+      queries:
+      - name: max bpf map pressure over time
+        query: max(max_over_time(cilium_bpf_map_pressure[%v:])) by (map_name)
+  - Identifier: MaxCiliumPoliciesLoadedCount
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Max number of Cilium Policies Loaded
+      metricVersion: v1
+      unit: policies
+      enableViolations: true
+      queries:
+      - name: max number of cilium policies loaded over time
+        query: max(max_over_time(cilium_policy[%v:]))
 - name: Cilium Agent Metrics
   measurements:
   - Identifier: CiliumAgentAverageCPUUsage
@@ -162,111 +162,111 @@ steps:
         query: quantile(0.90, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
       - name: Perc50
         query: quantile(0.5, avg_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-    - Identifier: CiliumAgentMaxMemUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Cilium Max Memory Usage
-        metricVersion: v1
-        unit: MB
-        enableViolations: true
-        queries:
-        - name: Perc99
-          query: quantile(0.99, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-        - name: Perc90
-          query: quantile(0.90, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-        - name: Perc50
-          query: quantile(0.5, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-    - Identifier: CiliumAgentApiProcessTimeSeconds
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Cilium Agent Api Process Time Seconds
-        metricVersion: v1
-        unit: s
-        enableViolations: true
-        queries:
-        - name: Perc99
-          query: histogram_quantile(0.99, sum(increase(cilium_agent_api_process_time_seconds_bucket[%v:])) by (le))
-        - name: Perc90
-          query: histogram_quantile(0.99, sum(increase(cilium_agent_api_process_time_seconds_bucket[%v:])) by (le))
-        - name: Perc50
-          query: histogram_quantile(0.99, sum(increase(cilium_agent_api_process_time_seconds_bucket[%v:])) by (le))
-    - Identifier: MaxCiliumAgentApiProcessTimeSecondsCount
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Max Cilium Agent Api Process Time Seconds Count
-        metricVersion: v1
-        unit: count
-        dimensions:
-        - method
-        enableViolations: true
-        queries: 
-        - name: max cilium agent api process time seconds count 
-          query: max(max_over_time(cilium_agent_api_process_time_seconds_count[%v:])) by (method)
+  - Identifier: CiliumAgentMaxMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Max Memory Usage
+      metricVersion: v1
+      unit: MB
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc90
+        query: quantile(0.90, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc50
+        query: quantile(0.5, max_over_time(cilium_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+  - Identifier: CiliumAgentApiProcessTimeSeconds
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Agent Api Process Time Seconds
+      metricVersion: v1
+      unit: s
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: histogram_quantile(0.99, sum(increase(cilium_agent_api_process_time_seconds_bucket[%v:])) by (le))
+      - name: Perc90
+        query: histogram_quantile(0.99, sum(increase(cilium_agent_api_process_time_seconds_bucket[%v:])) by (le))
+      - name: Perc50
+        query: histogram_quantile(0.99, sum(increase(cilium_agent_api_process_time_seconds_bucket[%v:])) by (le))
+  - Identifier: MaxCiliumAgentApiProcessTimeSecondsCount
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Max Cilium Agent Api Process Time Seconds Count
+      metricVersion: v1
+      unit: count
+      dimensions:
+      - method
+      enableViolations: true
+      queries: 
+      - name: max cilium agent api process time seconds count 
+        query: max(max_over_time(cilium_agent_api_process_time_seconds_count[%v:])) by (method)
 - name: Cilium Operator Metrics
   measurements:
-    - Identifier: CiliumOperatorAvgCPUUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Cilium Operator Avg CPU Usage
-        metricVersion: v1
-        unit: cpu
-        enableViolations: true
-        queries:
-        - name: Perc99
-          query: quantile(0.99, avg_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
-        - name: Perc90
-          query: quantile(0.90, avg_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
-        - name: Perc50
-          query: quantile(0.50, avg_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
-    - Identifier: CiliumOperatorMaxCPUUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Cilium Operator Max CPU Usage
-        metricVersion: v1
-        unit: cpu
-        enableViolations: true
-        queries:
-        - name: Perc99
-          query: quantile(0.99, max_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
-        - name: Perc90
-          query: quantile(0.90, max_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
-        - name: Perc50
-          query: quantile(0.50, max_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
-    - Identifier: CiliumOperatorMaxMemUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Cilium Operator Max Memory Usage
-        metricVersion: v1
-        unit: MB
-        enableViolations: true
-        queries:
-        - name: Perc99
-          query: quantile(0.99, max_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-        - name: Perc90
-          query: quantile(0.90, max_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-        - name: Perc50
-          query: quantile(0.5, max_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-    - Identifier: CiliumOperatorAvgMemUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: start
-        metricName: Cilium Operator Avg Memory Usage
-        metricVersion: v1
-        unit: MB
-        enableViolations: true
-        queries:
-        - name: Perc99
-          query: quantile(0.99, avg_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-        - name: Perc90
-          query: quantile(0.90, avg_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
-        - name: Perc50
-          query: quantile(0.5, avg_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+  - Identifier: CiliumOperatorAvgCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Operator Avg CPU Usage
+      metricVersion: v1
+      unit: cpu
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, avg_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
+      - name: Perc90
+        query: quantile(0.90, avg_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
+      - name: Perc50
+        query: quantile(0.50, avg_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
+  - Identifier: CiliumOperatorMaxCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Operator Max CPU Usage
+      metricVersion: v1
+      unit: cpu
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, max_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
+      - name: Perc90
+        query: quantile(0.90, max_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
+      - name: Perc50
+        query: quantile(0.50, max_over_time(rate(cilium_operator_process_cpu_seconds_total[1m])[%v:]))
+  - Identifier: CiliumOperatorMaxMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Operator Max Memory Usage
+      metricVersion: v1
+      unit: MB
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, max_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc90
+        query: quantile(0.90, max_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc50
+        query: quantile(0.5, max_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+  - Identifier: CiliumOperatorAvgMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: start
+      metricName: Cilium Operator Avg Memory Usage
+      metricVersion: v1
+      unit: MB
+      enableViolations: true
+      queries:
+      - name: Perc99
+        query: quantile(0.99, avg_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc90
+        query: quantile(0.90, avg_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
+      - name: Perc50
+        query: quantile(0.5, avg_over_time(cilium_operator_process_resident_memory_bytes[%v:]) / 1024 / 1024)
   - Identifier: HttpRequestsTotal
     Method: GenericPrometheusQuery
     Params:
@@ -489,53 +489,53 @@ steps:
 # 8. gather cilium agent metrics
 - name: CiliumBPFMapPressure Metrics
   measurements:
-    - Identifier: MaxCiliumBPFMapPressure
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
-    - Identifier: MaxCiliumPoliciesLoadedCount
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
+  - Identifier: MaxCiliumBPFMapPressure
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
+  - Identifier: MaxCiliumPoliciesLoadedCount
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
 - name: Cilium Metrics
   measurements:
-    - Identifier: CiliumAgentAverageCPUUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
-    - Identifier: CiliumAgentAvgMemUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
-    - Identifier: CiliumAgentMaxCPUUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
-    - Identifier: CiliumAgentMaxMemUsage
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
-    - Identifier: CiliumAgentApiProcessTimeSeconds
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
-    - Identifier: MaxCiliumAgentApiProcessTimeSecondsCount
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
-    - Identifier: CiliumAgentL7Policy
-      Method: GenericPrometheusQuery
-      Params:
-        action: gather
-        enableViolations: true
+  - Identifier: CiliumAgentAverageCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
+  - Identifier: CiliumAgentAvgMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
+  - Identifier: CiliumAgentMaxCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
+  - Identifier: CiliumAgentMaxMemUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
+  - Identifier: CiliumAgentApiProcessTimeSeconds
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
+  - Identifier: MaxCiliumAgentApiProcessTimeSecondsCount
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
+  - Identifier: CiliumAgentL7Policy
+    Method: GenericPrometheusQuery
+    Params:
+      action: gather
+      enableViolations: true
 - name: Cilium Operator Metrics
   measurements:
     - Identifier: CiliumOperatorAvgCPUUsage

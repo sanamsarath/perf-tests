@@ -1,0 +1,21 @@
+apiVersion: "cilium.io/v2"
+kind: CiliumLocalRedirectPolicy
+metadata:
+  name: "busybox-test-http-redirect"
+  namespace: busybox
+spec:
+  redirectFrontend:
+    addressMatcher:
+      ip: "8.8.8.8"  # Google DNS - redirect HTTP traffic to test target pods
+      toPorts:
+      - port: "80"
+        name: "http"
+        protocol: TCP
+  redirectBackend:
+    localEndpointSelector:
+      matchLabels:
+        app: test-target  # Target our test pod in busybox namespace
+    toPorts:
+    - port: "80"  # nginx port
+      name: "http"
+      protocol: TCP
