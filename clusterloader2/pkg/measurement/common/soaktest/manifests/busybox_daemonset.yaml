@@ -1,11 +1,17 @@
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
-  name: busybox-daemonset
+  name: busybox-deployment
   namespace: busybox
   labels:
     app: busybox
 spec:
+  replicas: 1000
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 5
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: busybox
@@ -16,7 +22,8 @@ spec:
     spec:
       containers:
       - name: busybox
-        image: busybox:1.35
+        image: mcr.microsoft.com/azurelinux/busybox:1.36
+        imagePullPolicy: IfNotPresent
         command:
         - sleep
         - "3600"
@@ -31,6 +38,13 @@ spec:
       restartPolicy: Always
       nodeSelector:
         slo: "true"
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: busybox
+            topologyKey: kubernetes.io/hostname
       tolerations:
       - effect: NoSchedule
         operator: Exists

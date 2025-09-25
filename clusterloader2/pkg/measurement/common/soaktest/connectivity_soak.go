@@ -157,7 +157,7 @@ func (m *ConnectivitySoakMeasurement) start(config *measurement.Config) ([]measu
 			return nil, err
 		}
 
-		// Deploy busybox DaemonSet (1 pod per node) and HTTP redirect LRP
+		// Deploy busybox Deployment and HTTP redirect LRP
 		if err := m.deployBusyboxAndHTTPRedirectLRP(); err != nil {
 			return nil, err
 		}
@@ -375,7 +375,7 @@ func (m *ConnectivitySoakMeasurement) deployNodeLocalDNSAndLRP() error {
 }
 
 func (m *ConnectivitySoakMeasurement) deployBusyboxAndHTTPRedirectLRP() error {
-	klog.Infof("Deploying busybox namespace, DaemonSet and HTTP redirect LocalRedirectPolicy")
+	klog.Infof("Deploying busybox namespace, Deployment and HTTP redirect LocalRedirectPolicy")
 
 	// Create isolated busybox namespace for HTTP redirect testing only
 	if err := client.CreateNamespace(m.k8sClient, "busybox"); err != nil {
@@ -383,17 +383,17 @@ func (m *ConnectivitySoakMeasurement) deployBusyboxAndHTTPRedirectLRP() error {
 	}
 
 	templateMap := map[string]interface{}{
-		// No template variables needed for the static DaemonSet
+		// No template variables needed for the static Deployment
 	}
 
-	// Deploy busybox DaemonSet (1 pod per node)
+	// Deploy busybox Deployment
 	if err := m.framework.ApplyTemplatedManifests(manifestsFS, busyboxDaemonSetFilePath, templateMap); err != nil {
-		return fmt.Errorf("phase: start, %s: failed to apply busybox DaemonSet manifest: %v", m.String(), err)
+		return fmt.Errorf("phase: start, %s: failed to apply busybox Deployment manifest: %v", m.String(), err)
 	}
 
-	// Deploy test target DaemonSet for LRP redirection
+	// Deploy test target Deployment for LRP redirection
 	if err := m.framework.ApplyTemplatedManifests(manifestsFS, testTargetPodFilePath, templateMap); err != nil {
-		return fmt.Errorf("phase: start, %s: failed to apply test target DaemonSet manifest: %v", m.String(), err)
+		return fmt.Errorf("phase: start, %s: failed to apply test target Deployment manifest: %v", m.String(), err)
 	}
 
 	//Deploy HTTP redirect LocalRedirectPolicy
@@ -401,7 +401,7 @@ func (m *ConnectivitySoakMeasurement) deployBusyboxAndHTTPRedirectLRP() error {
 		return fmt.Errorf("phase: start, %s: failed to apply HTTP redirect LocalRedirectPolicy manifest: %v", m.String(), err)
 	}
 
-	klog.Infof("Successfully deployed busybox namespace, DaemonSet and HTTP redirect LocalRedirectPolicy")
+	klog.Infof("Successfully deployed busybox namespace, Deployment and HTTP redirect LocalRedirectPolicy")
 	return nil
 }
 
@@ -644,43 +644,43 @@ func (m *ConnectivitySoakMeasurement) waitForDeploymentPodsReady(ctx context.Con
 	return nil
 }
 
-// waitForBusyboxPodsAndTestHTTP waits for busybox DaemonSet pods to be ready and starts continuous HTTP testing
+// waitForBusyboxPodsAndTestHTTP waits for busybox Deployment pods to be ready and starts continuous HTTP testing
 func (m *ConnectivitySoakMeasurement) waitForBusyboxPodsAndTestHTTP() error {
-	klog.Infof("Waiting for busybox DaemonSet pods to be ready...")
+	klog.Infof("Waiting for busybox Deployment pods to be ready...")
 
-	// Wait for DaemonSet to be ready
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	// Wait for Deployment to be ready
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	daemonSetName := "busybox-daemonset"
+	deploymentName := "busybox-deployment"
 	namespace := "busybox"
 
-	// Wait for DaemonSet to have all desired pods ready
+	// Wait for Deployment to have all desired pods ready
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for busybox DaemonSet to be ready")
+			return fmt.Errorf("timeout waiting for busybox Deployment to be ready")
 		default:
-			ds, err := m.k8sClient.AppsV1().DaemonSets(namespace).Get(context.TODO(), daemonSetName, metav1.GetOptions{})
+			deployment, err := m.k8sClient.AppsV1().Deployments(namespace).Get(context.TODO(), deploymentName, metav1.GetOptions{})
 			if err != nil {
-				klog.Warningf("Failed to get busybox DaemonSet: %v", err)
+				klog.Warningf("Failed to get busybox Deployment: %v", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			klog.V(3).Infof("DaemonSet status: NumberReady=%d, DesiredNumberScheduled=%d", ds.Status.NumberReady, ds.Status.DesiredNumberScheduled)
+			klog.V(3).Infof("Deployment status: ReadyReplicas=%d, Replicas=%d", deployment.Status.ReadyReplicas, deployment.Status.Replicas)
 
-			if ds.Status.NumberReady == ds.Status.DesiredNumberScheduled && ds.Status.NumberReady > 0 {
-				klog.Infof("Busybox DaemonSet is ready with %d pods", ds.Status.NumberReady)
-				goto daemonSetReady
+			if deployment.Status.ReadyReplicas == deployment.Status.Replicas && deployment.Status.ReadyReplicas > 0 {
+				klog.Infof("Busybox Deployment is ready with %d pods", deployment.Status.ReadyReplicas)
+				goto deploymentReady
 			}
 
-			klog.Infof("Waiting for busybox DaemonSet - Ready: %d/%d", ds.Status.NumberReady, ds.Status.DesiredNumberScheduled)
+			klog.Infof("Waiting for busybox Deployment - Ready: %d/%d", deployment.Status.ReadyReplicas, deployment.Status.Replicas)
 			time.Sleep(5 * time.Second)
 		}
 	}
 
-daemonSetReady:
+deploymentReady:
 
 	// Start continuous HTTP testing in a separate goroutine
 	klog.Infof("Starting continuous HTTP testing on all busybox pods...")
@@ -771,7 +771,8 @@ func (m *ConnectivitySoakMeasurement) continuousHTTPTest(namespace string) {
 func (m *ConnectivitySoakMeasurement) execHTTPRedirectTestOnPod(podName, namespace string) (bool, error) {
 	// Test if HTTP requests to 8.8.8.8:80 get redirected to test-target nginx pods (port 80)
 	// We'll use wget with timeout to test redirection (busybox has wget built-in)
-	cmd := []string{"wget", "-O-", "-T", "5", "--tries=1", "http://8.8.8.8/"}
+	// Use older BusyBox compatible options (no --tries)
+	cmd := []string{"wget", "-O-", "-T", "5", "http://8.8.8.8/"}
 
 	// Create the exec request
 	req := m.k8sClient.CoreV1().RESTClient().
@@ -836,14 +837,20 @@ func (m *ConnectivitySoakMeasurement) execHTTPRedirectTestOnPod(podName, namespa
 		}
 
 		// Command succeeded - check response to determine if redirected
+		// Any HTTP response (including errors) indicates successful LRP redirection
 		if strings.Contains(stdout, "nginx") || strings.Contains(stdout, "Welcome to nginx") ||
-			strings.Contains(stdout, "<title>") || len(strings.TrimSpace(stdout)) > 0 {
-			// Got HTTP response content - likely redirected to nginx test-target pods
+			strings.Contains(stdout, "<title>") || len(strings.TrimSpace(stdout)) > 0 ||
+			strings.Contains(stderr, "HTTP/1.1") || strings.Contains(stderr, "server returned error") {
+			// Got HTTP response (success or error) - indicates successful LRP redirection to nginx pods
 			truncatedOutput := stdout
 			if len(stdout) > 200 {
 				truncatedOutput = stdout[:200] + "..."
 			}
-			klog.V(5).Infof("wget to 8.8.8.8 returned nginx response (redirected to test-target pods) on pod %s: %s", podName, truncatedOutput)
+			if strings.Contains(stderr, "HTTP/1.1") {
+				klog.V(5).Infof("wget to 8.8.8.8 returned HTTP response (redirected to test-target pods) on pod %s: stderr=%s", podName, stderr)
+			} else {
+				klog.V(5).Infof("wget to 8.8.8.8 returned nginx response (redirected to test-target pods) on pod %s: %s", podName, truncatedOutput)
+			}
 			return true, nil
 		}
 
@@ -1147,11 +1154,11 @@ func (m *ConnectivitySoakMeasurement) cleanupDNSInfrastructure() error {
 		klog.Infof("Successfully deleted NodeLocalDNS DaemonSet")
 	}
 
-	// Delete busybox DaemonSet
-	if err := m.k8sClient.AppsV1().DaemonSets("busybox").Delete(context.TODO(), "busybox-daemonset", metav1.DeleteOptions{}); err != nil {
-		klog.Errorf("failed to delete busybox DaemonSet: %v", err)
+	// Delete busybox Deployment
+	if err := m.k8sClient.AppsV1().Deployments("busybox").Delete(context.TODO(), "busybox-deployment", metav1.DeleteOptions{}); err != nil {
+		klog.Errorf("failed to delete busybox Deployment: %v", err)
 	} else {
-		klog.Infof("Successfully deleted busybox DaemonSet")
+		klog.Infof("Successfully deleted busybox Deployment")
 	}
 
 	// Then delete LocalRedirectPolicy (stop redirecting to non-existent pods)

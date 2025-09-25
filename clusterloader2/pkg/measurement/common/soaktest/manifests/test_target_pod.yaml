@@ -1,11 +1,17 @@
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
-  name: test-redirect-target-daemonset
+  name: test-redirect-target-deployment
   namespace: busybox
   labels:
     app: test-target
 spec:
+  replicas: 1000
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: test-target
@@ -16,7 +22,8 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: nginx:alpine
+        image: k8s.gcr.io/nginx-slim:0.8
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
           protocol: TCP
@@ -31,6 +38,13 @@ spec:
       restartPolicy: Always
       nodeSelector:
         slo: "true"
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: test-target
+            topologyKey: kubernetes.io/hostname
       tolerations:
       - effect: NoSchedule
         operator: Exists
