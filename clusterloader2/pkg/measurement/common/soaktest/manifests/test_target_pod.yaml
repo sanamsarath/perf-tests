@@ -5,6 +5,7 @@ metadata:
   namespace: busybox
   labels:
     app: test-target
+    group: "service-discovery"
 spec:
   replicas: 1000
   strategy:
@@ -19,6 +20,7 @@ spec:
     metadata:
       labels:
         app: test-target
+        group: "service-discovery"
     spec:
       containers:
       - name: nginx
